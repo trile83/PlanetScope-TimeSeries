@@ -17,6 +17,10 @@ import argparse
 import h5py
 import logging
 import cv2
+import geopandas as gpd
+import rasterio as rio
+import shapely
+import rasterio.mask as mask
 import rioxarray as rxr
 from tensorboardX import SummaryWriter
 import json
@@ -27,13 +31,13 @@ torch.backends.cudnn.benchmark = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='resnet18', type=str)
-parser.add_argument('--model', default='biconvlstm', type=str, help='convlstm, convgru')
+parser.add_argument('--model', default='convlstm', type=str, help='convlstm, convgru')
 parser.add_argument('--dataset', default='tile01', type=str, help='tile01, tile02')
 parser.add_argument('--seq_len', default=6, type=int, help='number of frames in each video block')
 parser.add_argument('--num_seq', default=4, type=int, help='number of video blocks')
 parser.add_argument('--pred_step', default=3, type=int)
 parser.add_argument('--ds', default=3, type=int, help='frame downsampling rate')
-parser.add_argument('--batch_size', default=1, type=int)
+parser.add_argument('--batch_size', default=5, type=int)
 parser.add_argument('--lr', default=1e-4, type=float, help='learning rate')
 parser.add_argument('--wd', default=3e-4, type=float, help='weight decay')
 parser.add_argument('--resume', default='', type=str, help='path of model to resume')
@@ -45,12 +49,12 @@ parser.add_argument('--print_freq', default=5, type=int, help='frequency of prin
 parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate when resume training?')
 parser.add_argument('--prefix', default='tmp', type=str, help='prefix of checkpoint filename')
 parser.add_argument('--train_what', default='all', type=str)
-parser.add_argument('--img_dim', default=64, type=int)
-parser.add_argument('--ts_length', default=10, type=int)
+parser.add_argument('--img_dim', default=16, type=int)
+parser.add_argument('--ts_length', default=15, type=int)
 parser.add_argument('--pad_size', default=0, type=int)
 parser.add_argument('--num_chips', default=800, type=int)
-parser.add_argument('--num_val', default=80, type=int)
-parser.add_argument('--num_classes', default=5, type=int)
+parser.add_argument('--num_val', default=10, type=int)
+parser.add_argument('--num_classes', default=3, type=int)
 
 
 def rescale_truncate(image):
@@ -330,6 +334,201 @@ def padding_ts(ts, mask, padding_size=10):
 
     return padded_ts, padded_mask
 
+def get_field_data(field_file, pl_file):
+
+    vector = gpd.read_file(field_file)
+
+    # print(vector)
+
+    out_rast = {}
+    out_mask = {}
+
+    #save output files as per shapefile features
+    for i in range(len(vector)):
+        
+        with rio.open(pl_file) as src:
+            # read imagery file
+            vector=vector.to_crs(src.crs)
+            geom = []
+            coord = shapely.geometry.mapping(vector)["features"][i]["geometry"]
+            crop_type = vector["Crop_types"][i]
+            
+            geom.append(coord)
+            out_image, out_transform = mask.mask(src, geom, crop=True)
+            full_image, full_transform = mask.mask(src, geom, crop=True, filled=False)
+
+            # print('max of full image: ', np.max(full_image))
+            # print('min of full image: ', np.min(full_image))
+
+            # print(out_image.shape)
+            # # Check that after the clip, the image is not empty
+            # test = out_image[~np.isnan(out_image)]
+            # if test[test > 0].shape[0] == 0:
+            #     raise RuntimeError("Empty output")
+
+            out_meta = src.profile
+            out_meta.update({"height": out_image.shape[1],
+                            "width": out_image.shape[2],
+                            "transform": out_transform})
+
+            # out_rast.append(out_image)
+
+            if i not in out_rast.keys():
+                out_rast[i] = []
+            if i not in out_mask.keys():
+                out_mask[i] = []
+
+            out_rast[i].append(out_image)
+
+            # print(f'min of out image: {np.min(out_image)}')
+
+            if crop_type == 'corn':
+                nodata_mask = np.where(out_image[0,:,:]>0,1,0)
+                label = nodata_mask
+                # print(label.shape)
+                out_mask[i].append(label)
+            elif crop_type == 'soybean':
+                nodata_mask = np.where(out_image[0,:,:]>0,1,0)
+                nodata_mask[nodata_mask==1] = 2
+                label = nodata_mask
+                out_mask[i].append(label)
+            else:
+                label = np.zeros((out_image.shape[1],out_image.shape[2]))
+                out_mask[i].append(label)
+
+            # print(f'crop {crop_type} unique label {np.unique(label)}')
+
+            if full_image.ndim > 2:
+                save_image = np.transpose(full_image, (1,2,0))
+
+            # plt.figure(figsize=(20,20))
+            # plt.subplot(1,2,1)
+            # # plt.imshow(rescale_truncate(rescale_image(save_image[:,:,:3])))
+            # plt.imshow(save_image[:,:,:3]/11000)
+            # plt.subplot(1,2,2)
+            # # plt.imshow(label)
+            # plt.imshow(label)
+            # plt.savefig(f'/home/geoint/tri/Planet_khuong/output/raster-polygon-{crop_type}-{i}.png', dpi=300, bbox_inches='tight')
+            # plt.close()
+
+            del label
+            del nodata_mask
+
+    return out_rast, out_mask
+
+def get_raster_from_polygon(field_file, tile_name):
+
+    data_dir = '/home/geoint/tri/Planet_khuong/'
+    ts_dict = {}
+    ma_dict = {}
+    if tile_name == 'tile01':
+        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/*-21/'))
+        label_fl=f'{data_dir}/output/4906044_1459221_2021-09-16_2447_BGRN_SR_mask_segs_reclassified.tif'
+        # data_ts = []
+        # mask_ts = []
+        for monthly_dir in master_dir:
+            month = monthly_dir[-7:-1]
+            pl_dir = f'{str(monthly_dir)}/files/PSOrthoTile/'
+            img_fls = sorted(glob.glob(f'{pl_dir}/*/'))
+            count=0
+            for img_dir in img_fls:
+                if count == 6:
+                    break
+                json_dir = sorted(glob.glob(f'{img_dir}/*.json'))
+                dir = sorted(glob.glob(f'{img_dir}/analytic_sr_udm2/*.tif'))
+                fl = [x for x in dir if 'SR' in x]
+                cloud_fl = [x for x in dir if x[-8:-4] == 'udm2']
+
+                ## get metadata for overview and filtering for high-quality images
+                metadata = read_json(json_dir[0])
+                date = metadata['properties']['acquired']
+                black_fill = metadata['properties']['black_fill']
+                cloud_pct = metadata['properties']['cloud_percent']
+                light_haze_pct = metadata['properties']['light_haze_percent']
+                heavy_haze_pct = metadata['properties']['heavy_haze_percent']
+
+                if (float(black_fill) < 0.15 and cloud_pct < 12 and light_haze_pct < 5 and heavy_haze_pct < 3):
+
+                    print('image date: ', date)
+                    rast, mask = get_field_data(field_file, fl[0])
+                    if date not in ts_dict.keys():
+                        ts_dict[date] = rast
+                    if date not in ma_dict.keys():
+                        ma_dict[date] = mask
+
+                    count+=1
+
+    ts_arr, ma_arr = stack_dict(ts_dict, ma_dict)
+
+    return ts_arr, ma_arr
+
+def stack_dict(ts_dict, ma_dict):
+
+    im_dict = {}
+    ts_arr = []
+    ma_arr = []
+    for date in ts_dict.keys():
+        for i in ts_dict[date].keys():
+            if i not in im_dict.keys():
+                im_dict[i] = []
+
+            im_dict[i].append(ts_dict[date][i])
+
+    for date in ma_dict.keys():
+        for i in ma_dict[date].keys():
+            b = ma_dict[date][i][0]
+            # print("length b", len(b))
+            # print("b", b)
+            # print("b shape: ", b.shape)
+            ma_arr.append(ma_dict[date][i][0])
+
+            del b
+        break
+
+    for key in im_dict.keys():
+        a = np.stack(im_dict[key], axis=0)
+        a = np.squeeze(a)
+        # print('a shape: ', a.shape)
+        ts_arr.append(a)
+
+        del a
+
+    # print("ma arr length: ", len(ma_arr))
+
+    return ts_arr, ma_arr
+
+def get_data(out_raster, out_mask, num_chips=1, input_size=32):
+
+    temp_ts_set = []
+    temp_mask_set = []
+
+    i=0
+    count=0
+    while i < num_chips:
+        # print('out raster shape: ', out_raster.shape)
+        ts, mask = chipper(out_raster, out_mask, input_size=input_size)
+        ts = np.squeeze(ts)
+        mask = np.squeeze(mask)
+        
+        if count == 5:
+            break
+        if np.any(ts==0):
+            count += 1 
+            continue
+
+        # print(f'min ts ',np.min(ts))
+        # print(f'max ts ',np.max(ts))
+        temp_ts_set.append(ts)
+        temp_mask_set.append(mask)
+
+        i += 1
+
+    if len(temp_ts_set) > 0:
+        return temp_ts_set, temp_mask_set
+    else:
+        return [], []
+
+    
 def read_imagery(pl_file, mask=False):
 
     img_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
@@ -357,8 +556,6 @@ def read_json(json_fl):
     
     with open(json_fl, 'r') as f:
         json_data = json.load(f)
-
-    # print(json_data)
 
     return json_data
 
@@ -417,119 +614,76 @@ def read_dataset(tile_name='tile01'):
 
     return out_ts, label
 
-def get_label(pts_arr, data):
-
-    label = np.zeros((data.shape[0],data.shape[1]))
-    for i in range(len(pts_arr)):
-        val_lst = pts_arr['raster_value'][i]
-        crop = pts_arr['crop'][i]
-
-        ind = np.where((data[:,:,0]==val_lst[0])&
-                   (data[:,:,1]==val_lst[1])&
-                   (data[:,:,2]==val_lst[2])&
-                   (data[:,:,3]==val_lst[3]))
-
-        if crop == 'Soybeans':
-            label[ind[0][0],ind[1][0]] = 1
-        elif crop == 'Corn':
-            label[ind[0][0],ind[1][0]] = 2
-        elif crop == 'fall_seeded_small_grain':
-            label[ind[0][0],ind[1][0]] = 3
-
-    return label.astype(np.int64)
-
 
 def main():
+    #Loading original image
     torch.manual_seed(0)
     np.random.seed(0)
     global args; args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"]=str(args.gpu)
     global cuda; cuda = torch.device('cuda')
 
-    # prepare data
-    ##### REMEMBER TO CHECK IF THE IMAGE IS CHIPPED IN THE NO-DATA REGION, MAKE SURE IT HAS DATA.
-    ts_name=args.dataset
-    ts_arr, mask_arr = read_dataset(tile_name=ts_name)
 
-    print('Finish loading time series!')
+    pl_file = \
+            '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4854347_1459221_2021-08-31_241e/analytic_sr_udm2/4854347_1459221_2021-08-31_241e_BGRN_SR.tif'
+    field_fl = '/home/geoint/tri/Planet_khuong/Field_Survey_Polygons/Field_Survey_Polygons.shp'
 
-    input_size = args.img_dim
-    total_ts_len = args.ts_length # L
+    name = pl_file[-43:-4]
+    planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
+    ref_im = rxr.open_rasterio(pl_file)
 
-    padding_size = args.pad_size
-    
-    # print(f'data dict tappan01 ts shape: {ts_arr.shape}')
-    # print(f'data dict tappan01 mask shape: {mask_arr.shape}')
+    if planet_data.ndim > 2:
+        planet_data = np.transpose(planet_data, (1,2,0))
 
-    train_ts_set = []
-    train_mask_set = []
+    # ts_arr, mask_arr = read_dataset(tile_name='tile01')
 
-    ### get RGB image
-    # ts_arr = ts_arr[:,1:4,:,:]
-    # ts_arr = ts_arr[:,::-1,:,:]
+    # size = 8000
+    # originImg = planet_data[:size,:size,:]
 
-    ## get different chips in the Tappan Square for multiple time series
-    num_chips=args.num_chips # I
-    num_val=args.num_val
+    # out_raster, out_mask = get_field_data(field_fl, pl_file)
 
-    # h_list_train =[10,20]
-    # w_list_train =[15,25]
-    h_list_train =[10,20,30,40,50,70,80,90,100,110,200]
-    w_list_train =[15,25,35,45,55,75,85,95,105,115,215]
+    out_raster, out_mask = get_raster_from_polygon(field_fl, tile_name='tile01')
 
-    temp_ts_set = []
-    temp_mask_set = []
+    # print("length out raster: ", len(out_raster))
+    # print("length out mask: ", len(out_mask))
 
-    # for i in range(len(h_list_train)):
-    #     ts, mask = specific_chipper(ts_arr[:total_ts_len,:,:,:], mask_arr,h_list_train[i], w_list_train[i], input_size=input_size)
+    im_lst = []
+    ma_lst = []
+    for idx in range(len(out_raster)):
+        if np.count_nonzero(out_raster[idx]) > .25*out_raster[idx].shape[1]*out_raster[idx].shape[2]:
+            im, mask = get_data(out_raster[idx], out_mask[idx],input_size=16)
 
-    i=0
-    while i < (num_chips+num_val):
-        ts, mask = chipper(ts_arr[:total_ts_len,:,:,:], mask_arr, input_size=input_size)
-        # ts = ts.reshape((ts.shape[1],ts.shape[2],ts.shape[3],ts.shape[4]))
-        ts = np.squeeze(ts)
-        if np.any(ts==0) or np.any(mask==5):
-            continue
+            # im = np.squeeze(im)
+            # mask = np.squeeze(mask)
 
-        print(f"min pixel value: {np.min(ts)} & max pixel value: {np.max(ts)}")
+            if len(im) > 0:
+                # print("im 0 shape: ", im[0].shape)
+                # print("mask 0 shape: ", mask[0].shape)
+                im_lst.append(im)
+                ma_lst.append(mask)
 
-        # t_im = np.transpose(standardize_image(rescale_image(ts[5,:3,:,:]),'local'), (1,2,0))
 
-        # plt.figure(figsize=(10,10))
-        # plt.subplot(1,2,1)
-        # plt.imshow(t_im)
-        # plt.subplot(1,2,2)
-        # plt.imshow(np.squeeze(mask))
-        # plt.savefig(f'/home/geoint/tri/Planet_khuong/output/train_output/train_input_im-{i}.png',\
-        #              dpi=300,bbox_inches='tight')
-        # plt.close()
+    print(len(im_lst))
+        
+    ts_arr = np.stack(im_lst, axis=0)
+    ma_arr = np.stack(ma_lst, axis=0)
 
-        # del t_im
+    ts_arr = np.squeeze(ts_arr, axis=1)
+    ma_arr = np.squeeze(ma_arr, axis=1)
 
-        ts_old = ts
-        for frame in range(ts.shape[0]):
-            ts[frame] = standardize_image(rescale_image(ts[frame]),'local')
-        # mask = mask.reshape((mask.shape[1],mask.shape[2]))
-        mask = np.squeeze(mask)
+    print(f'ts shape: {ts_arr.shape}')
+    print(f'mask shape: {ma_arr.shape}')
 
-        print(f"after rescale & standardize: min pixel value: {np.min(ts)} & max pixel value: {np.max(ts)}")
+    train_ts_set = ts_arr
+    train_mask_set = ma_arr
 
-        # ts, mask = padding_ts(ts, mask, padding_size=padding_size)
+    for frame in range(len(train_ts_set)):
+        train_ts_set[frame] = standardize_image(rescale_image(train_ts_set[frame]),'local')
 
-        temp_ts_set.append(ts)
-        temp_mask_set.append(mask)
-
-        i+=1
-
-    train_ts_set = np.stack(temp_ts_set, axis=0)
-    train_ts_set = train_ts_set[:,:total_ts_len] # get the first 100 in the time series
-    train_mask_set = np.stack(temp_mask_set, axis=0)
-
-    del temp_ts_set
-    del temp_mask_set
+    train_ts_set = np.array(train_ts_set, dtype=np.float16)
 
     del ts_arr
-    del mask_arr
+    del ma_arr
 
     print(f"train ts set shape: {train_ts_set.shape}")
     print(f"train mask set shape: {train_mask_set.shape}")
@@ -544,7 +698,7 @@ def main():
     if model_option == "convlstm":
         model = ConvLSTM_Seg(
             num_classes=args.num_classes,
-            input_size=(input_size,input_size),
+            input_size=(args.img_dim,args.img_dim),
             hidden_dim=160,
             input_dim=4,
             kernel_size=(3, 3)
@@ -552,7 +706,7 @@ def main():
     elif model_option == "convgru":
             model = ConvGRU_Seg(
                 num_classes=args.num_classes,
-                input_size=(input_size,input_size),
+                input_size=(args.img_dim,args.img_dim),
                 input_dim=4,
                 kernel_size=(3, 3),
                 hidden_dim=180,
@@ -561,7 +715,7 @@ def main():
     elif model_option == "biconvlstm":
             model = BConvLSTM_Seg(
                 num_classes=args.num_classes,
-                input_size=(input_size,input_size),
+                input_size=(args.img_dim,args.img_dim),
                 hidden_dim=160,
                 input_dim=4,
                 kernel_size=(3, 3)
@@ -593,7 +747,7 @@ def main():
 
     # setup tools
     # global de_normalize; de_normalize = denorm()
-    global img_path; img_path, model_path = set_path(args)
+    global img_path
     model_dir = "/home/geoint/tri/Planet_khuong/output/checkpoints/"
     
     ### main loop ###
@@ -602,8 +756,16 @@ def main():
 
     # print(f"train mask set shape: {train_mask_set.shape}")
 
-    train_seg_set = tsDataset(train_ts_set[:-num_val],  train_mask_set[:-num_val])
-    val_seg_set = tsDataset(train_ts_set[-num_val:],  train_mask_set[-num_val:])
+    # train_set = train_ts_set[:-args.num_val]
+    # train_mask = train_mask_set[:-args.num_val]
+    # val_set = train_ts_set[-args.num_val:]
+    # val_mask = train_mask_set[-args.num_val:]
+    # print(f"train set shape: {train_set.shape}")
+    # print(f"val set shape: {val_set.shape}")
+
+    train_seg_set = tsDataset(train_ts_set[:-args.num_val],  train_mask_set[:-args.num_val])
+    val_seg_set = tsDataset(train_ts_set[-args.num_val:],  train_mask_set[-args.num_val:])
+
     loader_args_1 = dict(batch_size=args.batch_size, num_workers=4, pin_memory=True, drop_last=True, shuffle=True)
     train_segment_dl = DataLoader(train_seg_set, **loader_args_1)
     val_segment_dl = DataLoader(val_seg_set, **loader_args_1)
@@ -638,12 +800,12 @@ def main():
                             'optimizer': segment_optimizer.state_dict()}, 
                             is_best, filename=\
                                 os.path.join(model_dir, \
-                                    f'{model_option}__planet_4band_epoch_%s.pth' % str(epoch+1)), keep_all=False)
+                                    f'{model_option}__planet_4band_polygon_epoch_%s.pth' % str(epoch+1)), keep_all=False)
 
         
     plt.plot(train_loss_lst, color ="blue")
     plt.plot(val_loss_lst, color = "red")
-    plt.savefig(f'/home/geoint/tri/Planet_khuong/output/train_output/{model_option}_train_loss.png')
+    plt.savefig(f'/home/geoint/tri/Planet_khuong/output/train_output/{model_option}_train_polygon_loss.png')
     plt.close()
 
     print('Training from ep %d to ep %d finished' % (args.start_epoch, args.epochs))
@@ -660,9 +822,9 @@ def train(data_loader, segment_model, optimizer, epoch, model_option):
         input_mask = input['mask'].to(cuda, dtype=torch.long)
 
         (B,L,F,H,W) = input_im.shape
-        batch = 1
 
-        input_mask = input_mask.view(batch,H,W)
+
+        input_mask = input_mask.view(B,H,W)
 
         # print(f"features shape: {features.shape}")
         # print(f"mask shape: {input_mask.shape}")
@@ -677,6 +839,10 @@ def train(data_loader, segment_model, optimizer, epoch, model_option):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+
+        # print(mask_pred[0])
+        # print(input_mask[0])
 
         # output predictions
         # index_array = torch.argmax(mask_pred, dim=1)
@@ -700,7 +866,7 @@ def train(data_loader, segment_model, optimizer, epoch, model_option):
         # plt.title(f"Segmentation Prediction")
         # image = np.transpose(index_array[0,:,:].cpu().numpy(), (0,1))
         # plt.imshow(image)
-        # plt.savefig(f"/home/geoint/tri/Planet_khuong/output/training/train-{str(idx)}-{epoch}-{model_option}-pred.png", \
+        # plt.savefig(f"/home/geoint/tri/Planet_khuong/output/training/train-polygon-{str(idx)}-{epoch}-{model_option}-pred.png", \
         #             dpi=300, bbox_inches='tight')
         # plt.close()
 
@@ -719,9 +885,8 @@ def val(data_loader, segment_model, epoch, model_option):
             input_mask = input['mask'].to(cuda, dtype=torch.long)
 
             (B,L,F,H,W) = input_im.shape
-            batch = 1
 
-            input_mask = input_mask.view(batch,H,W)
+            input_mask = input_mask.view(B,H,W)
 
             # print(f"features shape: {features.shape}")
             # print(f"mask shape: {input_mask.shape}")
@@ -734,8 +899,10 @@ def val(data_loader, segment_model, epoch, model_option):
 
             losses.update(loss.item(), B)
 
-            # # output predictions
+            # output predictions
+            
             # index_array = torch.argmax(mask_pred, dim=1)
+            # print(index_array.cpu().numpy().dtype)
 
             # plt.figure(figsize=(20,20))
             # plt.subplot(1,3,1)
@@ -761,23 +928,6 @@ def val(data_loader, segment_model, epoch, model_option):
             # plt.close()
 
     return losses.local_avg
-
-
-def set_path(args):
-    if args.resume: exp_path = os.path.dirname(os.path.dirname(args.resume))
-    else:
-        exp_path = 'log_{args.prefix}/{args.dataset}-{args.img_dim}_{0}_{args.model}_\
-bs{args.batch_size}_lr{1}_seq{args.num_seq}_pred{args.pred_step}_len{args.seq_len}_ds{args.ds}_\
-train-{args.train_what}{2}'.format(
-                    'r%s' % args.net[6::], \
-                    args.old_lr if args.old_lr is not None else args.lr, \
-                    '_pt=%s' % args.pretrain.replace('/','-') if args.pretrain else '', \
-                    args=args)
-    img_path = os.path.join(exp_path, 'img')
-    model_path = os.path.join(exp_path, 'model')
-    if not os.path.exists(img_path): os.makedirs(img_path)
-    if not os.path.exists(model_path): os.makedirs(model_path)
-    return img_path, model_path
 
 if __name__ == '__main__':
     main()

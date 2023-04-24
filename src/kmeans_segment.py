@@ -46,7 +46,7 @@ def run():
     # originImg = cv2.imread('Swimming_Pool.jpg')
 
     pl_file = \
-        '/home/geoint/tri/Planet_khuong/07-21/files/PSOrthoTile/4648313_1459221_2021-07-02_222b/analytic_sr_udm2/4648313_1459221_2021-07-02_222b_BGRN_SR.tif'
+        '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
     
     # pl_file = \
     #     '/home/geoint/tri/Planet_khuong/sep-21/files/PSOrthoTile/4906044_1459221_2021-09-16_2447/analytic_sr_udm2/4906044_1459221_2021-09-16_2447_BGRN_SR.tif'
@@ -137,7 +137,7 @@ def run():
     plt.subplot(1,2,2)
     plt.title("KMeans")
     plt.imshow(X_cluster.astype(np.uint8), cmap="hsv")
-    plt.savefig(f'output/kmeans-{size}-{n_clusters}-clusters.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'output/{name}-kmeans-{size}-{n_clusters}-clusters.png', dpi=300, bbox_inches='tight')
     plt.show()
     plt.close()
 

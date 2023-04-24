@@ -33,7 +33,7 @@ torch.backends.cudnn.benchmark = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='unet', type=str, help='encoder for the DPC')
-parser.add_argument('--model', default='convlstm', type=str, help='convlstm, dpc-unet, unet')
+parser.add_argument('--model', default='biconvlstm', type=str, help='convlstm, dpc-unet, unet')
 parser.add_argument('--dataset', default='tile01', type=str, help='tile01, tile02')
 parser.add_argument('--seq_len', default=6, type=int, help='number of frames in each video block')
 parser.add_argument('--num_seq', default=4, type=int, help='number of video blocks')
@@ -432,6 +432,45 @@ def main():
             model_option=model_option
         )
 
+    elif model_option == 'biconvlstm':
+        model_dir = "/home/geoint/tri/Planet_khuong/output/checkpoints/"
+        model = BConvLSTM_Seg(
+            num_classes=args.num_classes,
+            input_size=(input_size,input_size),
+            hidden_dim=160,
+            input_dim=4,
+            kernel_size=(3, 3)
+            )
+ 
+        model = nn.DataParallel(model)
+
+        model_checkpoint = f'{str(model_dir)}biconvlstm__planet_4band_epoch_53.pth'
+        if torch.cuda.is_available():
+            model = model.to(cuda)
+
+        model.load_state_dict(torch.load(model_checkpoint)['state_dict'])
+
+        xraster = train_ts_set
+        temporary_tif = xr.where(xraster > 0, xraster, 50) # 2000 is the optimal value for the nodata
+ 
+        # temporary_tif = xr.where(xraster > -9000, xraster, 120)
+        # temporary_tif = rescale_image(temporary_tif)
+
+        prediction = inference.sliding_window_tiler(
+            xraster=temporary_tif,
+            model=model,
+            n_classes=5,
+            overlap=0.5,
+            batch_size=16,
+            standardization='local',
+            mean=0,
+            std=0,
+            normalize=10000.0,
+            rescale=None,
+            im_type='planet',
+            model_option=model_option
+        )
+
     elif model_option == 'convgru':
         model_dir = "/home/geoint/tri/Planet_khuong/output/checkpoints/"
         model = ConvGRU_Seg(
@@ -506,10 +545,8 @@ def main():
     plt.subplot(1,2,2)
     plt.title(f"Segmentation Prediction")
     image = prediction
-    plt.imshow(image)
-    
-    plt.savefig(f"{str(data_dir)}{ts_name}-{model_option}.png", dpi=300, bbox_inches='tight')
-
+    plt.imshow(image[4000:5000,4000:5000])
+    plt.savefig(f"{str(data_dir)}{ts_name}-{model_option}-4000-4000.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     #save Tiff file output
