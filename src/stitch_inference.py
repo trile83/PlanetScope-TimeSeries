@@ -34,7 +34,7 @@ def save_tiff(prediction):
     # prediction = prediction.where(xraster != -9999)
 
     prediction.attrs['long_name'] = ('otcb')
-    prediction.attrs['model_name'] = ('random-forest')
+    prediction.attrs['model_name'] = ('lstm')
     prediction = prediction.transpose("band", "y", "x")
 
     # Set nodata values on mask
@@ -48,7 +48,7 @@ def save_tiff(prediction):
 
     # Save COG file to disk
     prediction.rio.to_raster(
-        f'{data_dir}tile01-random-forest.tif',
+        f'{data_dir}tile01-lstm-edge.tif',
         BIGTIFF="IF_SAFER",
         compress='LZW',
         # num_threads='all_cpus',
@@ -59,17 +59,22 @@ def save_tiff(prediction):
 if __name__ == '__main__':
 
     array_dir = 'output/rf_out/'
-    array_fls = sorted(glob.glob('output/rf_out/*.npy'))
+    array_fls = sorted(glob.glob('output/rf_out/lstm/*.npy'))
+
+    edge_fl = 'output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-red.tiff'
+    edge_nir_fl = 'output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-nir.tiff'
 
     warr_lst = []
     harr_lst = []
     count = 0
     for file in array_fls:
         print(file)
-        search_term = re.search(r'rf.(.*\d*).npy', file).group(1)
+        search_term = re.search(r'lstm.(.*\d*).npy', file).group(1)
         search_widx = re.search(r'\d_(\d*)', search_term).group(1)
-        search_hidx = re.search(r'rf-(\d*)', search_term).group(1)
+        search_hidx = re.search(r'lstm-(\d*)', search_term).group(1)
         output = np.load(file)
+        print(output.shape)
+        # output = output.reshape((2000,2000))
         harr_lst.append(output)
         if count == 3:
             arr_0 = np.concatenate(harr_lst, axis=1)
@@ -83,13 +88,29 @@ if __name__ == '__main__':
     output = np.concatenate(warr_lst, axis=0)
     print(output.shape)
 
-    # save_tiff(output)
+    
+
+    ## read edge file
+    edge = np.squeeze(rxr.open_rasterio(edge_fl).values)
+    edge[edge<0.05]=0
+    edge[edge>=0.05]=1
+
+    edge_nir = np.squeeze(rxr.open_rasterio(edge_nir_fl).values)
+    edge_nir[edge_nir<0.25]=0
+    edge_nir[edge_nir>=0.25]=1
+
+    output = output+edge*3+edge_nir*4
+
+    output[output>4] = 5
+
+    save_tiff(output)
 
     ## plot prediction
     plt.figure(figsize=(20,20))
     plt.axis('off')
     plt.imshow(output)
-    plt.savefig('output/rf_out/random-forest-prediction.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    plt.savefig('output/rf_out/lstm-prediction-edge-new.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     

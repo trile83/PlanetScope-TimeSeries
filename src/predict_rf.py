@@ -58,73 +58,138 @@ def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
     return image
 
 
-def train_random_forest(training_file):
+def train_random_forest(training_file, khuong):
 
     # check if model exists
-    filename = 'output/model_saved/randomforest_model.sav'
+    if khuong:
+        filename = 'output/model_saved/randomforest_model.sav'
+    else:
+        filename = 'output/model_saved/randomforest_model_0425.sav'
+
     if not os.path.isfile(filename):
 
         #Read field survey data
-        training_df = pd.read_csv(training_file)
-        crop = training_df['crop']
-        Y = training_df['crop_code'].values
-        X = training_df.iloc[:,3:8].values
+        if khuong:
+            training_df = pd.read_csv(training_file)
+            crop = training_df['crop']
+            Y = training_df['crop_code'].values
+            X = training_df.iloc[:,3:8].values
 
-        # print(training_df.head(10))
-        print(X.shape)
-        print(Y.shape)
+            # print(training_df.head(10))
+            print(X.shape)
+            print(Y.shape)
 
-        #arrange into 93 fields and 28 dates
-        X_all = []
-        Y_all = []
-        for i in range(0,len(X),93*256):
-            #print(i,i+93*256,X[i:i+93*256,:].shape)
-            X_all.append(X[i:i+93*256,:])
+            #arrange into 93 fields and 28 dates
+            X_all = []
+            Y_all = []
+            for i in range(0,len(X),93*256): ## 93 polygons with 16x16 (256) chip in each polygon
+                #print(i,i+93*256,X[i:i+93*256,:].shape)
+                X_all.append(X[i:i+93*256,:])
+                
+            X = np.concatenate((X_all),axis=1)    
+            Y=Y[:93*256]
+
+            print(X.shape)
+            print(Y.shape)
+
+            print(np.unique(Y, return_counts=True))
+
+            class_number=2 # corn and soybeans
+            test_size=0.2
+            random_state = 42
+
+            X_train = [] 
+            y_train = [] 
+            X_test = []    
+            y_test = []
+
+            croptypes=['corn','soybean']
+            for i in range(class_number):
+                Y_class = Y[Y==i+1] #corn=1 and soybean=2
+                X_class = X[Y==i+1]
+
+                X_class[np.isnan(X_class)] = 0
+                
+                X_train_class, X_test_class, y_train_class, y_test_class = \
+                    train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
+                if i+1 == 1:
+                    print("corn",y_train_class.shape,\
+                        X_train_class.shape)
+                else:
+                    print("soybean",y_train_class.shape,\
+                        X_train_class.shape)
             
-        X = np.concatenate((X_all),axis=1)    
-        Y=Y[:93*256]
-
-        print(X.shape)
-        print(Y.shape)
-
-        print(np.unique(Y, return_counts=True))
-
-        class_number=2 # corn and soybeans
-        test_size=0.2
-        random_state = 42
-
-        X_train = [] 
-        y_train = [] 
-        X_test = []    
-        y_test = []
-
-        croptypes=['corn','soybean']
-        for i in range(class_number):
-            Y_class = Y[Y==i+1] #corn=1 and soybean=2
-            X_class = X[Y==i+1]
-
-            X_class[np.isnan(X_class)] = 0
+                X_train.append(X_train_class)
+                X_test.append(X_test_class)
+                y_train.append(y_train_class)
+                y_test.append(y_test_class)
             
-            X_train_class, X_test_class, y_train_class, y_test_class = \
-                train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
-            if i+1 == 1:
-                print("corn",y_train_class.shape,\
-                    X_train_class.shape)
-            else:
-                print("soybean",y_train_class.shape,\
-                    X_train_class.shape)
-        
-            X_train.append(X_train_class)
-            X_test.append(X_test_class)
-            y_train.append(y_train_class)
-            y_test.append(y_test_class)
-        
-        # Merge multiple classes      
-        X_train_all = np.concatenate(X_train, axis=0)
-        y_train_all = np.concatenate(y_train, axis=0).astype('uint8')
-        X_test_all = np.concatenate(X_test, axis=0)    
-        y_test_all = np.concatenate(y_test, axis=0).astype('uint8')
+            # Merge multiple classes      
+            X_train_all = np.concatenate(X_train, axis=0)
+            y_train_all = np.concatenate(y_train, axis=0).astype('uint8')
+            X_test_all = np.concatenate(X_test, axis=0)    
+            y_test_all = np.concatenate(y_test, axis=0).astype('uint8')
 
+        else:
+            training_df = pd.read_csv(training_file)
+            print(training_df['class'].unique())
+            crop = training_df['class']
+            training_df['class_id'] = training_df['class']
+            training_df['class_id'] = training_df['class_id'].replace(
+                ['other-crop','corn','soybean','fall-crop','water'],
+                [0,1,2,3,4]
+                )
+            Y = training_df['class_id'].values
+            X = training_df.iloc[:,3:8].values
+
+            print(Y[:5])
+            print(X[:5])
+
+            #arrange into 93 fields and 28 dates
+            X_all = []
+            Y_all = []
+            for i in range(0,len(X),665*64): ## 665 polygons with 8x8 (64) chip in each polygon
+                X_all.append(X[i:i+665*64,:])
+                
+            X = np.concatenate((X_all),axis=1)    
+            Y=Y[:665*64]
+
+            print(X.shape)
+            print(Y.shape)
+
+            class_number=5 # other-crop, corn, soybean, fall-crop, water
+            test_size=0.2
+            random_state = 42
+
+            X_train = [] 
+            y_train = [] 
+            X_test = []    
+            y_test = []
+
+            class_types=['other-crop','corn','soybean','fall-crop','water']
+            for i in range(class_number):
+                Y_class = Y[Y==i] # other-crop=0, corn=1, soybean=2, fall-crop=3, water=4
+                X_class = X[Y==i]
+
+                X_class[np.isnan(X_class)] = 0
+                
+                X_train_class, X_test_class, y_train_class, y_test_class = \
+                    train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
+
+                print(class_types[i],y_train_class.shape,\
+                        X_train_class.shape)
+
+            
+                X_train.append(X_train_class)
+                X_test.append(X_test_class)
+                y_train.append(y_train_class)
+                y_test.append(y_test_class)
+            
+            # Merge multiple classes      
+            X_train_all = np.concatenate(X_train, axis=0)
+            y_train_all = np.concatenate(y_train, axis=0).astype('uint8')
+            X_test_all = np.concatenate(X_test, axis=0)    
+            y_test_all = np.concatenate(y_test, axis=0).astype('uint8')
 
         X_train = X_train_all
         L_train = y_train_all
@@ -200,7 +265,7 @@ def predict_image(model_RF, X_array, start_hidx: int, start_widx: int, im_size: 
     pl_file = '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4854347_1459221_2021-08-31_241e/analytic_sr_udm2/4854347_1459221_2021-08-31_241e_BGRN_SR.tif'
 
     planet_data = tifffile.imread(pl_file)
-    print(planet_data.shape)
+    # print(planet_data.shape)
 
     im_pred = model_RF.predict(X_array)
     im_out = im_pred.reshape((im_size,im_size))
@@ -225,14 +290,20 @@ if __name__ =='__main__':
 
     files_lst = sorted(glob.glob('output/csv/*.csv'))
     # ts_file = 'output/csv/dpc-unet-pixel-all-2000-2000_2000.csv'
-    training_file = 'dpc-unet-pixel_rearrranged_kt.csv'
+
+    khuong = False
+
+    if khuong:
+        training_file = 'dpc-unet-pixel_rearrranged_kt.csv' ## khuong;s file
+    else:
+        training_file = 'dpc-unet-pixel-label-label.csv'
 
     # search_term = re.search(r'all.(.*\d*).csv', ts_file).group(1)
     # search_widx = re.search(r'\d_(\d*)', search_term).group(1)
     # search_hidx = re.search(r'\d-(\d*)', search_term).group(1)
 
     im_size=2000
-    model = train_random_forest(training_file)
+    model = train_random_forest(training_file, khuong)
     print("Model loaded!")
 
     # X_array = prepare_ts(ts_file, im_size=im_size)
@@ -246,4 +317,4 @@ if __name__ =='__main__':
         output = predict_image(model, X_array,start_hidx=int(search_hidx), \
                                start_widx=int(search_widx), im_size=im_size)
         
-        np.save(f'output/rf_out/{search_hidx}-{search_widx}.npy', output)
+        np.save(f'output/rf_out/rf-{search_hidx}_{search_widx}.npy', output)

@@ -18,7 +18,7 @@ import json
 import rasterio.mask as mask
 import glob
 import csv
-import h5py
+import time
 
 def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
     """
@@ -153,14 +153,19 @@ def get_data(out_raster, out_mask, num_chips=1, input_size=32):
 
     return ts, mask
 
-def get_field_data(field_file, pl_file, date, writer, pixlst):
+def get_field_data(field_file, pl_file, date, writer):
 
     vector = gpd.read_file(field_file)
 
     # print(vector)
+    input_size = 8
 
     out_raster = []
     out_mask = []
+
+    vector = vector[vector['area']>100000].reset_index()
+
+    print("total polygons: ",len(vector))
 
     #save output files as per shapefile features
     for i in range(len(vector)):
@@ -170,7 +175,12 @@ def get_field_data(field_file, pl_file, date, writer, pixlst):
             vector=vector.to_crs(src.crs)
             geom = []
             coord = shapely.geometry.mapping(vector)["features"][i]["geometry"]
-            crop_type = vector["Crop_types"][i]
+            # crop_type = vector["Crop_types"][i]
+            crop_type = vector["class"][i]
+            area = vector["area"][i]
+
+            if area < 100000:
+                continue
             
             geom.append(coord)
             out_image, out_transform = mask.mask(src, geom, crop=True)
@@ -195,12 +205,22 @@ def get_field_data(field_file, pl_file, date, writer, pixlst):
 
             out_raster.append(out_image)
 
-            out_image, out_ndvi = get_data(out_image, out_ndvi, input_size=16)
+            if out_image.shape[0] < (input_size//2) or out_image.shape[1] < (input_size//2):
+                continue
+
+            print(out_image.shape)
+            print(area)
+
+            # print(out_image.shape)
+            # print(area)
+
+            out_image, out_ndvi = get_data(out_image, out_ndvi, input_size=input_size)
             pix_id=0
             for hidx in range(out_image.shape[0]):
                 for widx in range(out_image.shape[1]):
                     # if np.any(out_image[hidx,widx,:]) != 0:
-                    writer.writerow([i,pix_id,date,out_image[hidx,widx,:],out_ndvi[hidx,widx],crop_type])
+                    writer.writerow([i,pix_id,date,out_image[hidx,widx,0],out_image[hidx,widx,1]\
+                                    ,out_image[hidx,widx,2],out_image[hidx,widx,3],out_ndvi[hidx,widx],crop_type])
                     pix_id+=1
 
     # return out_raster, out_mask, crop_type
@@ -277,15 +297,17 @@ def read_dataset(tile_name='tile01', get_label=True, field_fl = '', im_size=8000
 
     if get_label:
         data_name = 'label'
+        out_fl = f'{out_dir}dpc-unet-pixel-{data_name}-label.csv'
     else:
         data_name = 'all'
+        out_fl = f'{out_dir}dpc-unet-pixel-{data_name}-{im_size}-{start_hidx}_{start_widx}.csv'
     
     pix_lst = []
 
-    with open(f'{out_dir}dpc-unet-pixel-{data_name}-{im_size}-{start_hidx}_{start_widx}.csv','w') as f1:
+    with open(out_fl,'w') as f1:
         writer=csv.writer(f1, delimiter=',',lineterminator='\n',)
         if get_label:
-            writer.writerow(['id','pixid','date','bands','ndvi','crop'])
+            writer.writerow(['id','pixid','date','blue','green','red','nir','ndvi','class'])
         else:
             writer.writerow(['date','blue','green','red','nir','ndvi'])
 
@@ -356,7 +378,8 @@ def run():
 
     # pl_file = \
     #         '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4854347_1459221_2021-08-31_241e/analytic_sr_udm2/4854347_1459221_2021-08-31_241e_BGRN_SR.tif'
-    field_fl = '/home/geoint/tri/Planet_khuong/Field_Survey_Polygons/Field_Survey_Polygons.shp'
+    # field_fl = '/home/geoint/tri/Planet_khuong/Field_Survey_Polygons/Field_Survey_Polygons.shp'
+    field_fl = '/home/geoint/tri/Planet_khuong/output/raster_polygon_analysis/training_kmean_sam_polygons.shp'
 
     # name = pl_file[-43:-4]
     # date = pl_file[-27:-12]
@@ -374,21 +397,12 @@ def run():
 
     # out_raster, out_mask = get_field_data(field_fl, pl_file)
 
+    tic = time.time()
+
     im_size = 2000
-    pix_lst = read_dataset(tile_name='tile01', get_label=False, field_fl=field_fl, im_size = im_size)
+    pix_lst = read_dataset(tile_name='tile01', get_label=True, field_fl=field_fl, im_size = im_size)
 
-    # pix_array = np.stack(pix_lst, axis=0)
-
-    # print(pix_array.shape)
-
-    # array_filename = '/home/geoint/tri/Planet_khuong/output/array/pixarray.pkl'
-    # with open(array_filename, 'wb') as outp:  # Overwrites any existing file.
-    #     pickle.dump(pix_array, outp, pickle.HIGHEST_PROTOCOL)
-
-    # array_filename = f'/home/geoint/tri/Planet_khuong/output/array/pixarray-{im_size}.hdf5'
-    # h = h5py.File(array_filename, 'w')
-    # h.create_dataset('data', data=pix_array, compression="gzip", compression_opts=9)
-
+    print("time to run csv output: ", time.time() - tic)
     print("Finish 1D time series output!")
 
     

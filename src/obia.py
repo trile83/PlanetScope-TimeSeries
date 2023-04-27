@@ -111,7 +111,8 @@ def get_field_data(field_file, pl_file):
             vector=vector.to_crs(src.crs)
             geom = []
             coord = shapely.geometry.mapping(vector)["features"][i]["geometry"]
-            crop_type = vector["Crop_types"][i]
+            # crop_type = vector["Crop_types"][i]
+            crop_type = vector["class"][i]
             
             geom.append(coord)
             out_image, out_transform = mask.mask(src, geom, crop=True)
@@ -257,7 +258,7 @@ def stack_dict(ts_dict, ma_dict):
 
     return ts_arr, ma_arr
 
-def get_data(out_raster, out_mask, num_chips=1, input_size=32):
+def get_data(out_raster, out_mask, num_chips=1, input_size=8):
 
     temp_ts_set = []
     temp_mask_set = []

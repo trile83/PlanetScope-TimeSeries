@@ -74,7 +74,7 @@ def run():
 
     tic = time.time()  
     # Run Kmeans clustering
-    n_clusters = 50
+    n_clusters = 5
     k_means = KMeans(n_clusters=n_clusters)
     k_means.fit(flatImg)
 
