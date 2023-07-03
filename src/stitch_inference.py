@@ -3,9 +3,47 @@ import rioxarray as rxr
 import xarray as xr
 import glob
 import re
+import logging
+from skimage import exposure
 import matplotlib.pyplot as plt
+import matplotlib.colors as pltc
 
-def save_tiff(prediction):
+def rescale_truncate(image):
+    if np.amin(image) < 0:
+        image = np.where(image < 0,0,image)
+    if np.amax(image) > 1:
+        image = np.where(image > 1,1,image) 
+
+    map_img =  np.zeros(image.shape)
+    for band in range(3):
+        p2, p98 = np.percentile(image[:,:,band], (2, 98))
+        map_img[:,:,band] = exposure.rescale_intensity(image[:,:,band], in_range=(p2, p98))
+    return map_img
+
+def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
+    """
+    Rescale image [0, 1] per-image or per-channel.
+    Args:
+        image (np.ndarray): array to rescale
+        rescale_type (str): rescaling strategy
+    Returns:
+        rescaled np.ndarray
+    """
+    image = image.astype(np.float32)
+    mask = np.where(image[0,:,:]>0,True,False)
+    if rescale_type == 'per-image':
+        image = (image - np.min(image,initial=6000,where=mask)) / \
+            (np.max(image,initial=6000,where=mask) - np.min(image,initial=6000,where=mask))
+    elif rescale_type == 'per-channel':
+        for i in range(image.shape[0]):
+            image[i, :, :] = (
+                image[i, :, :] - np.min(image[i, :, :])) / \
+                (np.max(image[i, :, :]) - np.min(image[i, :, :]))
+    else:
+        logging.info(f'Skipping based on invalid option: {rescale_type}')
+    return image
+
+def save_tiff(prediction, model_option):
 
     data_dir = 'output/rf_out/'
 
@@ -34,7 +72,7 @@ def save_tiff(prediction):
     # prediction = prediction.where(xraster != -9999)
 
     prediction.attrs['long_name'] = ('otcb')
-    prediction.attrs['model_name'] = ('lstm')
+    prediction.attrs['model_name'] = (model_option)
     prediction = prediction.transpose("band", "y", "x")
 
     # Set nodata values on mask
@@ -48,7 +86,7 @@ def save_tiff(prediction):
 
     # Save COG file to disk
     prediction.rio.to_raster(
-        f'{data_dir}tile01-lstm-edge.tif',
+        f'{data_dir}tile01-{model_option}-edge-0702-1.tiff',
         BIGTIFF="IF_SAFER",
         compress='LZW',
         # num_threads='all_cpus',
@@ -56,10 +94,17 @@ def save_tiff(prediction):
         dtype='uint8'
     )
 
+    return np.squeeze(rxr.open_rasterio(ref_im_fl).values)
+
 if __name__ == '__main__':
 
     array_dir = 'output/rf_out/'
-    array_fls = sorted(glob.glob('output/rf_out/lstm/*.npy'))
+    model_option = 'rf'
+
+    if model_option == 'rf':
+        array_fls = sorted(glob.glob('output/rf_out/*.npy'))
+    elif model_option == 'lstm':
+        array_fls = sorted(glob.glob('output/rf_out/lstm/*.npy'))
 
     edge_fl = 'output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-red.tiff'
     edge_nir_fl = 'output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-nir.tiff'
@@ -69,17 +114,23 @@ if __name__ == '__main__':
     count = 0
     for file in array_fls:
         print(file)
-        search_term = re.search(r'lstm.(.*\d*).npy', file).group(1)
-        search_widx = re.search(r'\d_(\d*)', search_term).group(1)
-        search_hidx = re.search(r'lstm-(\d*)', search_term).group(1)
+        if model_option == 'rf':
+            search_term = re.search(r'rf.(.*\d*).npy', file).group(1)
+            search_widx = re.search(r'\d_(\d*)', search_term).group(1)
+            search_hidx = re.search(r'rf-(\d*)', search_term).group(1)
+        elif model_option == 'lstm':
+            search_term = re.search(r'lstm.(.*\d*).npy', file).group(1)
+            search_widx = re.search(r'\d_(\d*)', search_term).group(1)
+            search_hidx = re.search(r'lstm-(\d*)', search_term).group(1)
+
         output = np.load(file)
-        print(output.shape)
+        # print(output.shape)
         # output = output.reshape((2000,2000))
         harr_lst.append(output)
         if count == 3:
             arr_0 = np.concatenate(harr_lst, axis=1)
             warr_lst.append(arr_0)
-            print(arr_0.shape)
+            # print(arr_0.shape)
             harr_lst = []
             count = 0
         else:
@@ -99,18 +150,27 @@ if __name__ == '__main__':
     edge_nir[edge_nir<0.25]=0
     edge_nir[edge_nir>=0.25]=1
 
-    output = output+edge*3+edge_nir*4
+    output = output+edge*10+edge_nir*10
 
-    output[output>4] = 5
+    output[output>5] = 6
 
-    save_tiff(output)
+    image = save_tiff(output, model_option)
+
+    image = np.transpose(image, (1,2,0))
+
+    colors = ['yellow', 'green', 'pink','lightgreen', 'blue','white']
+    colormap = pltc.ListedColormap(colors)
 
     ## plot prediction
     plt.figure(figsize=(20,20))
+    plt.subplot(1,2,1)
     plt.axis('off')
-    plt.imshow(output)
+    plt.imshow(rescale_truncate(rescale_image(image[:,:,:3])))
+    plt.subplot(1,2,2)
+    plt.axis('off')
+    plt.imshow(output, colormap)
     # plt.show()
-    plt.savefig('output/rf_out/lstm-prediction-edge-new.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'output/rf_out/{model_option}-prediction-edge-0702-1.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     

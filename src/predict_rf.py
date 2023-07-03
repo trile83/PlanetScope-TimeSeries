@@ -19,6 +19,7 @@ from skimage import exposure
 import re
 import pickle
 import glob
+import polars
 
 np.set_printoptions(suppress=True)
 
@@ -64,7 +65,8 @@ def train_random_forest(training_file, khuong):
     if khuong:
         filename = 'output/model_saved/randomforest_model.sav'
     else:
-        filename = 'output/model_saved/randomforest_model_0425.sav'
+        # filename = 'output/model_saved/randomforest_model_0425.sav'
+        filename = 'output/model_saved/randomforest_model_0703.sav'
 
     if not os.path.isfile(filename):
 
@@ -131,14 +133,31 @@ def train_random_forest(training_file, khuong):
             y_test_all = np.concatenate(y_test, axis=0).astype('uint8')
 
         else:
-            training_df = pd.read_csv(training_file)
+            with open(training_file, 'rb') as file:
+                training_df = pickle.load(file)
+            # training_df = pd.read_csv(training_file)
             print(training_df['class'].unique())
+            # print(training_df['pixid'].unique())
             crop = training_df['class']
+
+            ## use csv file
+            # training_df['class_id'] = training_df['class']
+            # training_df['class_id'] = training_df['class_id'].replace(
+            #     ['other','corn','soybean','fall-crop','other-crop','water'],
+            #     [0,1,2,3,4,5]
+            #     )
+            
+            ## use pickle file
+            # training_df = training_df.with_columns((pl.col("class")).alias("class_id")) ## for polars dataframe
+
+            training_df = training_df.to_pandas()
             training_df['class_id'] = training_df['class']
             training_df['class_id'] = training_df['class_id'].replace(
-                ['other-crop','corn','soybean','fall-crop','water'],
-                [0,1,2,3,4]
+                ['other','corn','soybean','fall-crop','other-crop','water'],
+                [0,1,2,3,4,5]
                 )
+
+
             Y = training_df['class_id'].values
             X = training_df.iloc[:,3:8].values
 
@@ -148,16 +167,30 @@ def train_random_forest(training_file, khuong):
             #arrange into 93 fields and 28 dates
             X_all = []
             Y_all = []
-            for i in range(0,len(X),665*64): ## 665 polygons with 8x8 (64) chip in each polygon
-                X_all.append(X[i:i+665*64,:])
+
+            # for i in range(0,len(X),665*64): ## 665 polygons with 8x8 (64) chip in each polygon
+            #     X_all.append(X[i:i+665*64,:])
+                
+            # X = np.concatenate((X_all),axis=1)    
+            # Y=Y[:665*64]
+
+
+            # for i in range(0,len(X),729*64): ## 729 polygons with 8x8 (64) chip in each polygon, new mask
+            #     X_all.append(X[i:i+729*64,:])
+                
+            # X = np.concatenate((X_all),axis=1)    
+            # Y=Y[:729*64]
+
+            for i in range(0,len(X),101*200): ## 53 polygons with 200 pixels in each polygon, new mask
+                X_all.append(X[i:i+101*200,:])
                 
             X = np.concatenate((X_all),axis=1)    
-            Y=Y[:665*64]
+            Y=Y[:101*200]
 
             print(X.shape)
             print(Y.shape)
 
-            class_number=5 # other-crop, corn, soybean, fall-crop, water
+            class_number=6 # other, corn, soybean, fall-crop, other-crop, water
             test_size=0.2
             random_state = 42
 
@@ -166,9 +199,9 @@ def train_random_forest(training_file, khuong):
             X_test = []    
             y_test = []
 
-            class_types=['other-crop','corn','soybean','fall-crop','water']
+            class_types=['other','corn','soybean','fall-crop','other-crop','water']
             for i in range(class_number):
-                Y_class = Y[Y==i] # other-crop=0, corn=1, soybean=2, fall-crop=3, water=4
+                Y_class = Y[Y==i] # other=0, corn=1, soybean=2, fall-crop=3, other-crop=4, water=5
                 X_class = X[Y==i]
 
                 X_class[np.isnan(X_class)] = 0
@@ -179,7 +212,6 @@ def train_random_forest(training_file, khuong):
                 print(class_types[i],y_train_class.shape,\
                         X_train_class.shape)
 
-            
                 X_train.append(X_train_class)
                 X_test.append(X_test_class)
                 y_train.append(y_train_class)
@@ -237,8 +269,10 @@ def train_random_forest(training_file, khuong):
 
         # save model to disk
         pickle.dump(model_RF, open(filename, 'wb'))
+        print("Finished Training Random Forest!")
     else:
         model_RF = pickle.load(open(filename, 'rb'))
+        print("Model loaded from file!")
 
     return model_RF
 
@@ -296,7 +330,16 @@ if __name__ =='__main__':
     if khuong:
         training_file = 'dpc-unet-pixel_rearrranged_kt.csv' ## khuong;s file
     else:
-        training_file = 'dpc-unet-pixel-label-label.csv'
+        # training_file = 'dpc-unet-pixel-label-label.csv'
+        # training_file = 'dpc-unet-pixel-label-label-0529.csv'
+        training_file = 'dpc-unet-pixel-label-200perPoly-label-0702.pkl'
+
+    with open(training_file, 'rb') as file:
+        df = pickle.load(file)
+
+    print(df.shape)
+
+    print(df.head(20))
 
     # search_term = re.search(r'all.(.*\d*).csv', ts_file).group(1)
     # search_widx = re.search(r'\d_(\d*)', search_term).group(1)
@@ -304,7 +347,7 @@ if __name__ =='__main__':
 
     im_size=2000
     model = train_random_forest(training_file, khuong)
-    print("Model loaded!")
+    
 
     # X_array = prepare_ts(ts_file, im_size=im_size)
     # predict_image(model, X_array,start_hidx=int(search_hidx), start_widx=int(search_widx), im_size=im_size)

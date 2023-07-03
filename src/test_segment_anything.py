@@ -101,25 +101,32 @@ if __name__ == '__main__':
     print(image.shape)
     print(image.dtype)
 
+    file_type = 'dakota'
+
     # try tiff file
     pl_file = \
-            '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+            '/home/geoint/tri/Planet_khuong/07-21/files/PSOrthoTile/4660870_1459221_2021-07-05_100a/analytic_sr_udm2/4660870_1459221_2021-07-05_100a_BGRN_SR.tif'
 
     pl_file_1 = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459321_2021-09-18_242d_BGRN_SR.tif'
-    sen_file = '/home/geoint/tri/nasa_senegal/wCAS/Tappan25_WV02_20110430_M1BS_103001000A6FE900_data.tif'
+
+    if file_type == 'senegal':
+        pl_file = '/home/geoint/tri/nasa_senegal/cassemance/Tappan01_WV02_20110430_M1BS_103001000A27E100_data.tif'
+    elif file_type == 'dakota':
+        # pl_file = '/home/geoint/tri/Planet_khuong/output/tile01-other.tif'
+        pl_file = pl_file_1
 
 
     # name = pl_file[-43:-4]
     image = tifffile.imread(pl_file)
 
-    image = image[:1000,:1000,1:4]
+    # image = image[:1000,:1000,1:4]
 
-    image_clone = np.zeros(image.shape)
-    image_clone[:,:,0] = image[:,:,2]
-    image_clone[:,:,1] = image[:,:,0]
-    image_clone[:,:,2] = image[:,:,1]
+    # image_clone = np.zeros(image.shape)
+    # image_clone[:,:,0] = image[:,:,2]
+    # image_clone[:,:,1] = image[:,:,0]
+    # image_clone[:,:,2] = image[:,:,1]
 
-    image= image_clone
+    # image= image_clone
     
     print(image.dtype)
     print(image.shape)
@@ -130,34 +137,52 @@ if __name__ == '__main__':
     # plt.axis('off')
     # plt.show()
 
-    image = image.astype('uint8')
+    image[image<-9999] = -1
+
+    image = image.astype('int8')
 
     model_type = "vit_l"
 
     if model_type == "vit_h":
-        sam_checkpoint = "/home/geoint/tri/Planet_khuong/src/sam_vit_h_4b8939.pth"
+        sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_h_4b8939.pth"
     elif model_type == "vit_l":
-        sam_checkpoint = "/home/geoint/tri/Planet_khuong/src/sam_vit_l_0b3195.pth"
+        sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_l_0b3195.pth"
     elif model_type == "vit_b":
-        sam_checkpoint = "/home/geoint/tri/Planet_khuong/src/sam_vit_b_01ec64.pth"
+        sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_b_01ec64.pth"
 
     device = "cuda"
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    sam_kwargs = {
+        "points_per_side": 32,
+        "pred_iou_thresh": 0.86,
+        "stability_score_thresh": 0.92,
+        "crop_n_layers": 1,
+        "crop_n_points_downscale_factor": 2,
+        "min_mask_region_area": 100,
+    }
+
     sam = SamGeo(
         checkpoint=sam_checkpoint,
         model_type=model_type,
         device=device,
         erosion_kernel=(3, 3),
         mask_multiplier=255,
-        sam_kwargs=None,
+        sam_kwargs=sam_kwargs,
     )
 
-    mask = f'output/sam/senegal/Tappan25_WV02_20110430_M1BS_103001000A6FE900_data-segment-{model_type}.tiff'
-    sam.generate(sen_file, mask)
+    if file_type == 'senegal':
+        mask = f'output/sam/senegal/Tappan01_WV02_20110430_M1BS_103001000A27E100_data-segment-{model_type}.tif'
+        sam.generate(pl_file, mask)
 
-    shapefile = f'output/sam/senegal/Tappan25_WV02_20110430_M1BS_103001000A6FE900_data-segment-{model_type}.shp'
-    sam.tiff_to_vector(mask, shapefile)
+        shapefile = f'output/sam/senegal/Tappan01_WV02_20110430_M1BS_103001000A27E100_data-segment-{model_type}.shp'
+        sam.tiff_to_vector(mask, shapefile)
+    else:
+        mask = f'output/sam/other-{model_type}.tif'
+        sam.generate(pl_file, mask)
+
+        shapefile = f'output/sam/other-{model_type}.shp'
+        sam.tiff_to_vector(mask, shapefile)
 
 
     #There are several tunable parameters in automatic mask generation that control 

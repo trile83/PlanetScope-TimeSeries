@@ -77,14 +77,14 @@ def predict(ts_file):
     input_dim = 5    
     hidden_dim = 256
     layer_dim = 3
-    output_dim = 5
+    output_dim = 6 # previously 5
 
     output_lst = []
 
     model = LSTMClassifier(input_dim, hidden_dim, layer_dim, output_dim)
     model = model.cuda()
 
-    checkpoint = 'output/checkpoints/lstm-best.pth'
+    checkpoint = 'output/checkpoints/lstm-best-0530.pth'
     model.load_state_dict(torch.load(checkpoint))
 
     for i, x in enumerate(trn_dl):
