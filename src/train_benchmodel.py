@@ -27,7 +27,7 @@ torch.backends.cudnn.benchmark = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='resnet18', type=str)
-parser.add_argument('--model', default='biconvlstm', type=str, help='convlstm, convgru')
+parser.add_argument('--model', default='convgru', type=str, help='convlstm, convgru, biconvlstm')
 parser.add_argument('--dataset', default='tile01', type=str, help='tile01, tile02')
 parser.add_argument('--seq_len', default=6, type=int, help='number of frames in each video block')
 parser.add_argument('--num_seq', default=4, type=int, help='number of video blocks')
@@ -46,11 +46,11 @@ parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate
 parser.add_argument('--prefix', default='tmp', type=str, help='prefix of checkpoint filename')
 parser.add_argument('--train_what', default='all', type=str)
 parser.add_argument('--img_dim', default=64, type=int)
-parser.add_argument('--ts_length', default=10, type=int)
+parser.add_argument('--ts_length', default=15, type=int)
 parser.add_argument('--pad_size', default=0, type=int)
-parser.add_argument('--num_chips', default=800, type=int)
-parser.add_argument('--num_val', default=80, type=int)
-parser.add_argument('--num_classes', default=5, type=int)
+parser.add_argument('--num_chips', default=400, type=int)
+parser.add_argument('--num_val', default=40, type=int)
+parser.add_argument('--num_classes', default=4, type=int)
 
 
 def rescale_truncate(image):
@@ -268,8 +268,8 @@ def chipper(ts_stack, mask, input_size=32):
     '''
     t, c, h, w = ts_stack.shape
 
-    i = np.random.randint(0, h-input_size)
-    j = np.random.randint(0, w-input_size)
+    i = np.random.randint(0, h-0-input_size)
+    j = np.random.randint(0, w-0-input_size)
     
     out_ts = np.array([ts_stack[:, :, i:(i+input_size), j:(j+input_size)]])
     out_mask = np.array([mask[i:(i+input_size), j:(j+input_size)]])
@@ -294,7 +294,6 @@ def specific_chipper(ts_stack, mask, h_index, w_index, input_size=32):
     out_mask = np.array([mask[i:(i+input_size), j:(j+input_size)]])
 
     return out_ts, out_mask
-
 
 def padding_ts(ts, mask, padding_size=10):
     '''
@@ -335,11 +334,34 @@ def read_imagery(pl_file, mask=False):
     img_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
     ref_im = rxr.open_rasterio(pl_file)
 
+    # if mask:
+    #     img_data[img_data==9] = 1
+    #     img_data[img_data==3] = 2
+    #     img_data[img_data==4] = 2
+    #     img_data[img_data==6] = 2
+    #     img_data[img_data==5] = 3
+    #     img_data[img_data==7] = 3
+    #     img_data[img_data==10] = 3
+    #     img_data[img_data==8] = 4
+    #     img_data[img_data==2] = 5
+
+    # if mask:
+    #     img_data[img_data==3] = 0
+    #     img_data[img_data==7] = 1
+    #     img_data[img_data==9] = 1
+    #     img_data[img_data==5] = 2
+    #     img_data[img_data==6] = 2
+    #     img_data[img_data==8] = 2
+    #     img_data[img_data==4] = 4
+    #     img_data[img_data==2] = 3
+    #     img_data[img_data==11] = 3
+    #     img_data[img_data==1] = 5
+
     if mask:
-        img_data[img_data==3] = 0
-        img_data[img_data==4] = 3
-        img_data[img_data==5] = 4
-        img_data[img_data==6] = 5
+        img_data = np.nan_to_num(img_data, nan=0.0)
+
+        print(np.unique(img_data))
+
 
     # if img_data.ndim > 2:
     #     img_data = np.transpose(img_data, (1,2,0))
@@ -364,20 +386,22 @@ def read_json(json_fl):
 
 def read_dataset(tile_name='tile01'):
     data_dir = '/home/geoint/tri/Planet_khuong/'
+
+    '''
     if tile_name == 'tile01':
         master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/*-21/'))
-        label_fl=f'{data_dir}/output/4906044_1459221_2021-09-16_2447_BGRN_SR_mask_segs_reclassified.tif'
+        label_fl=f'{data_dir}/output/training-data/label-tile01-0802.tif'
 
         data_ts = []
+        count=0
         for monthly_dir in master_dir:
             month = monthly_dir[-7:-1]
             pl_dir = f'{str(monthly_dir)}/files/PSOrthoTile/'
             img_fls = sorted(glob.glob(f'{pl_dir}/*/'))
-            count=0
             for img_dir in img_fls:
                 
-                if count == 5:
-                    break
+                # if count == 5:
+                #     break
                 json_dir = sorted(glob.glob(f'{img_dir}/*.json'))
                 dir = sorted(glob.glob(f'{img_dir}/analytic_sr_udm2/*.tif'))
                 fl = [x for x in dir if 'SR' in x]
@@ -405,6 +429,21 @@ def read_dataset(tile_name='tile01'):
                     data_ts.append(img)
                 
                     count+=1
+
+                if count == 20:
+                    break
+    '''
+
+    if tile_name == 'tile01':
+        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/output/median_composite/*_median_composit.tiff'))
+        label_fl=f'{data_dir}output/training-data/label-tile01-0802.tif'
+
+        data_ts = []
+        for monthly_fl in master_dir:
+
+            img = read_imagery(monthly_fl, mask=False)
+            data_ts.append(img)
+    
 
     out_ts = np.stack(data_ts, axis=0)
 
@@ -491,7 +530,7 @@ def main():
         if np.any(ts==0) or np.any(mask==5):
             continue
 
-        print(f"min pixel value: {np.min(ts)} & max pixel value: {np.max(ts)}")
+        # print(f"min pixel value: {np.min(ts)} & max pixel value: {np.max(ts)}")
 
         # t_im = np.transpose(standardize_image(rescale_image(ts[5,:3,:,:]),'local'), (1,2,0))
 
@@ -512,7 +551,7 @@ def main():
         # mask = mask.reshape((mask.shape[1],mask.shape[2]))
         mask = np.squeeze(mask)
 
-        print(f"after rescale & standardize: min pixel value: {np.min(ts)} & max pixel value: {np.max(ts)}")
+        # print(f"after rescale & standardize: min pixel value: {np.min(ts)} & max pixel value: {np.max(ts)}")
 
         # ts, mask = padding_ts(ts, mask, padding_size=padding_size)
 
@@ -625,7 +664,9 @@ def main():
         print(f"epoch {epoch+1}: train loss: {train_loss} & val loss: {val_loss}")
 
         # save check_point
-        is_best = val_loss < min_loss
+        # is_best = val_loss < min_loss
+
+        is_best = train_loss < min_loss
 
         if is_best:
             min_loss = val_loss
@@ -638,12 +679,12 @@ def main():
                             'optimizer': segment_optimizer.state_dict()}, 
                             is_best, filename=\
                                 os.path.join(model_dir, \
-                                    f'{model_option}__planet_4band_epoch_%s.pth' % str(epoch+1)), keep_all=False)
+                                    f'{model_option}_planet_4band_0802_epoch_%s.pth' % str(epoch+1)), keep_all=False)
 
         
     plt.plot(train_loss_lst, color ="blue")
     plt.plot(val_loss_lst, color = "red")
-    plt.savefig(f'/home/geoint/tri/Planet_khuong/output/train_output/{model_option}_train_loss.png')
+    plt.savefig(f'/home/geoint/tri/Planet_khuong/output/train_output/{model_option}_train_loss_0802.png')
     plt.close()
 
     print('Training from ep %d to ep %d finished' % (args.start_epoch, args.epochs))

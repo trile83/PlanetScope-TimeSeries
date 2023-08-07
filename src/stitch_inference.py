@@ -43,12 +43,16 @@ def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
         logging.info(f'Skipping based on invalid option: {rescale_type}')
     return image
 
-def save_tiff(prediction, model_option):
+def save_tiff(prediction, model_option, tile='tile01'):
 
     data_dir = 'output/rf_out/'
 
-    ref_im_fl = \
-        '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4854347_1459221_2021-08-31_241e/analytic_sr_udm2/4854347_1459221_2021-08-31_241e_BGRN_SR.tif'
+    if tile == 'tile01':
+        ref_im_fl = \
+            '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4854347_1459221_2021-08-31_241e/analytic_sr_udm2/4854347_1459221_2021-08-31_241e_BGRN_SR.tif'
+    elif tile == 'tile02':
+        ref_im_fl = \
+            '/home/geoint/tri/Planet_khuong/Tile1459222_Aug2021_psorthotile_analytic_sr_udm2/PSOrthoTile/4753640_1459222_2021-08-01_2421_BGRN_SR.tif'
     
     ref_im = rxr.open_rasterio(ref_im_fl)
     ref_im = ref_im.transpose("y", "x", "band")
@@ -63,7 +67,7 @@ def save_tiff(prediction, model_option):
 
     prediction = xr.DataArray(
                 np.expand_dims(prediction, axis=-1),
-                name='otcb',
+                name=model_option,
                 coords=ref_im.coords,
                 dims=ref_im.dims,
                 attrs=ref_im.attrs
@@ -86,7 +90,7 @@ def save_tiff(prediction, model_option):
 
     # Save COG file to disk
     prediction.rio.to_raster(
-        f'{data_dir}tile01-{model_option}-edge-0702-1.tiff',
+        f'{data_dir}tile02-{model_option}-0804.tiff',
         BIGTIFF="IF_SAFER",
         compress='LZW',
         # num_threads='all_cpus',
@@ -142,23 +146,26 @@ if __name__ == '__main__':
     
 
     ## read edge file
-    edge = np.squeeze(rxr.open_rasterio(edge_fl).values)
-    edge[edge<0.05]=0
-    edge[edge>=0.05]=1
+    # edge = np.squeeze(rxr.open_rasterio(edge_fl).values)
+    # edge[edge<0.05]=0
+    # edge[edge>=0.05]=1
 
-    edge_nir = np.squeeze(rxr.open_rasterio(edge_nir_fl).values)
-    edge_nir[edge_nir<0.25]=0
-    edge_nir[edge_nir>=0.25]=1
+    # edge_nir = np.squeeze(rxr.open_rasterio(edge_nir_fl).values)
+    # edge_nir[edge_nir<0.25]=0
+    # edge_nir[edge_nir>=0.25]=1
 
-    output = output+edge*10+edge_nir*10
+    # output = output+edge+edge_nir
 
-    output[output>5] = 6
+    # output[output>3] = 4
 
-    image = save_tiff(output, model_option)
+    tile = 'tile02'
+
+    image = save_tiff(output, model_option, tile)
 
     image = np.transpose(image, (1,2,0))
 
-    colors = ['yellow', 'green', 'pink','lightgreen', 'blue','white']
+    # colors = ['brown','yellow', 'green', 'pink','lightgreen', 'blue','white']
+    colors = ['lightgreen','yellow', 'green', 'blue','white']
     colormap = pltc.ListedColormap(colors)
 
     ## plot prediction
@@ -170,9 +177,5 @@ if __name__ == '__main__':
     plt.axis('off')
     plt.imshow(output, colormap)
     # plt.show()
-    plt.savefig(f'output/rf_out/{model_option}-prediction-edge-0702-1.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'output/rf_out/{model_option}-tile02-prediction-0804-1.png', dpi=300, bbox_inches='tight')
     plt.close()
-
-    
-    
-

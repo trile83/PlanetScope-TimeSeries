@@ -49,7 +49,7 @@ def run():
     # originImg = cv2.imread('Swimming_Pool.jpg')
 
     pl_file = \
-            '/home/geoint/tri/Planet_khuong/sep-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+            '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
     field_file = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
 
     name = pl_file[-43:-4]
@@ -92,15 +92,21 @@ def run():
     sobelX_3 = nd.sobel(originImg[:,:,band]+0,axis=0)
     sobelY_3 = nd.sobel(originImg[:,:,band]+0,axis=1)
 
+    edj_0 = abs(sobelX_0)+abs(sobelY_0)
+    edj_1 = abs(sobelX_1)+abs(sobelY_1)
     edj_2 = abs(sobelX_2)+abs(sobelY_2)
     edj_3 = abs(sobelX_3)+abs(sobelY_3)
 
-    edj_2 = rescale_image(edj_2)
-    edj_3 = rescale_image(edj_3)
+    # edj_1 = rescale_image(edj_1)
+    # edj_2 = rescale_image(edj_2)
+    # edj_3 = rescale_image(edj_3)
     
+    print(f'max edj green : {np.max(edj_2)}')
     print(f'max edj red : {np.max(edj_2)}')
-    print(f'min edj red : {np.min(edj_2)}')
+    print(f'min edj nir : {np.min(edj_2)}')
 
+    output_blue = edj_0
+    output_green = edj_1
     output_red = edj_2
     output_nir = edj_3
 
@@ -113,11 +119,15 @@ def run():
             drop=True
         )
     
-    for idx, prediction in enumerate([output_red, output_nir]):
+    for idx, prediction in enumerate([output_red, output_nir, output_green, output_blue]):
         if idx == 0:
             band_name = 'red'
-        else:
+        elif idx == 1:
             band_name = 'nir'
+        elif idx == 2:
+            band_name = 'green'
+        elif idx == 3:
+            band_name = 'blue'
 
         prediction = xr.DataArray(
                     np.expand_dims(prediction, axis=-1),
@@ -152,19 +162,23 @@ def run():
 
 
     plt.figure(figsize=(20,20))
-    plt.subplot(1,3,1)
+    plt.subplot(1,4,1)
     plt.title("Image")
     plt.imshow(rescale_truncate(rescale_image(originImg[:,:,:3])))
 
     
-    plt.subplot(1,3,2)
+    plt.subplot(1,4,2)
     plt.title("Sobel for Red Band")
     plt.imshow(rescale_truncate(output_red),cmap='gray')
 
     
-    plt.subplot(1,3,3)
+    plt.subplot(1,4,3)
     plt.title("Sobel for NIR band")
     plt.imshow(rescale_truncate(output_nir),cmap='gray')
+
+    plt.subplot(1,4,4)
+    plt.title("Sobel for GREEN band")
+    plt.imshow(rescale_truncate(output_green),cmap='gray')
     plt.savefig(f'output/edge-detection-{name}-{size}.png', dpi=300, bbox_inches='tight')
     # plt.show()
     plt.close()

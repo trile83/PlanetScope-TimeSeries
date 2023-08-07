@@ -80,7 +80,7 @@ def get_label(pts_arr, data):
 
     return label.astype(np.int64)
 
-def stack_features(X, label, num_label=2):
+def stack_features(X, label, num_label=5):
 
     label = label.reshape((label.shape[0]*label.shape[1]))
     X = X.reshape((X.shape[0]*X.shape[1],X.shape[2]))
@@ -112,7 +112,7 @@ def run():
     # originImg = cv2.imread('Swimming_Pool.jpg')
 
     pl_file = \
-            '/home/geoint/tri/Planet_khuong/07-21/files/PSOrthoTile/4648313_1459221_2021-07-02_222b/analytic_sr_udm2/4648313_1459221_2021-07-02_222b_BGRN_SR.tif'
+            '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4794326_1459221_2021-08-13_1010/analytic_sr_udm2/4794326_1459221_2021-08-13_1010_BGRN_SR.tif'
     field_file = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
 
     planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
@@ -127,6 +127,7 @@ def run():
     pts_arr = get_field_data(field_file, pl_file)
     # print(pts_arr)
     label = get_label(pts_arr, planet_data)
+    print(label)
     print(np.unique(label))
     # print(planet_data[3300:3600,3300:3600,:].shape)
 

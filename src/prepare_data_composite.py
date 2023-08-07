@@ -89,7 +89,7 @@ def cal_ndvi(image):
     #                        np.divide((image[:,:,3]-image[:,:,2]), \
     #                                  (image[:,:,3]+image[:,:,2])), 0)
     
-    np.seterr(divide='ignore')
+    np.seterr(divide='ignore', invalid='ignore')
     ndvi = np.divide((image[:,:,3]-image[:,:,2]), (image[:,:,3]+image[:,:,2]))
     ndvi = np.nan_to_num(ndvi,nan=-10000.0)
     return ndvi
@@ -162,25 +162,40 @@ def get_data_randomchoice(out_raster, out_ndvi, num_pix=100):
 
     # print(out_raster.shape)
     # print(np.min(out_raster[0]))
-    
-    index_ma = np.where(out_raster[:,:,0] > -1)
 
-    h_indx=index_ma[0]
-    w_indx=index_ma[1]
+    count = 0
+    h_indx=[]
+    w_indx=[]
+    ts_lst=[]
+    ndvi_lst=[]
+    while True:
+        i = np.random.randint(0, out_raster.shape[0])
+        j = np.random.randint(0, out_raster.shape[1])
+        if out_raster[i,j,3] > 0:
+            if count >= num_pix:
+                break
+            # h_indx.append(i)
+            # w_indx.append(j)
+            ts_lst.append(out_raster[i,j,:])
+            ndvi_lst.append(out_ndvi[i,j])
 
-    # print(len(h_indx))
+            count+=1
 
-    pind = np.random.randint(0,h_indx.size, size=num_pix)
 
-    # print(len(pind))
+    # print(len(ts_lst))
+    # print(ts_lst[:5])
 
-    # print(len(h_indx[pind]))
-    # print(len(w_indx[pind]))
+    # pind = np.random.randint(0,h_indx.size, size=num_pix)
 
-    # print(out_raster[h_indx[pind],w_indx[pind],0])
+    # ts = out_raster[h_indx[pind],w_indx[pind],:]
+    # mask = out_ndvi[h_indx[pind],w_indx[pind]]
 
-    ts = out_raster[h_indx[pind],w_indx[pind],:]
-    mask = out_ndvi[h_indx[pind],w_indx[pind]]
+    ts = np.stack(ts_lst, axis=0)
+    mask = np.stack(ndvi_lst, axis=0)
+
+    del count
+
+    # print(ts.shape)
 
     return ts, mask
 
@@ -188,19 +203,22 @@ def get_field_data(field_file, pl_file, date, pix_lst):
 
     vector = gpd.read_file(field_file)
 
+    random_choice = True
+
     # print(vector)
-    input_size = 8
+    input_size = 32
 
     out_raster = []
     out_mask = []
 
-    area_threshold = 100000
+    area_threshold = 150000
 
     vector = vector[vector['area']>area_threshold].reset_index()
 
     print("total polygons: ",len(vector))
 
     #save output files as per shapefile features
+    remove_count = 0
     for i in range(len(vector)):
         
         with rio.open(pl_file) as src:
@@ -220,11 +238,14 @@ def get_field_data(field_file, pl_file, date, pix_lst):
 
             # print(out_image.shape)
             ## Check that after the clip, the image is not empty
-            # test = out_image[~np.isnan(out_image)]
+            test = out_image[~np.isnan(out_image)]
 
-            # if test[test > 0].shape[0] == 0:
-            #     # raise RuntimeError("Empty output")
-            #     continue
+            
+            if test[test > 0].shape[0] == 0:
+                # raise RuntimeError("Empty output")
+                remove_count+=1
+                continue
+
 
             out_meta = src.profile
             out_meta.update({"height": out_image.shape[1],
@@ -244,34 +265,44 @@ def get_field_data(field_file, pl_file, date, pix_lst):
             # print(out_image.shape)
             # print(area)
 
-            out_image, out_ndvi = get_pix_data(out_image, out_ndvi, input_size=input_size)
+            if not random_choice:
 
-            # pix_id=0
-            # for hidx in range(out_image.shape[0]):
-            #     for widx in range(out_image.shape[1]):
-            #         # if np.any(out_image[hidx,widx,:]) != 0:
-            #         writer.writerow([i,pix_id,date,out_image[hidx,widx,0],out_image[hidx,widx,1]\
-            #                         ,out_image[hidx,widx,2],out_image[hidx,widx,3],out_ndvi[hidx,widx],crop_type])
-            #         pix_id+=1
+                out_image, out_ndvi = get_data(out_image, out_ndvi, input_size=input_size)
 
-            ## get pixel by random choice
-            # out_image, out_ndvi = get_data_randomchoice(out_image, out_ndvi, num_pix=200)
+                pix_id=0
+                for hidx in range(out_image.shape[0]):
+                    for widx in range(out_image.shape[1]):
+                        # if np.any(out_image[hidx,widx,:]) != 0:
+                        # writer.writerow([i,pix_id,date,out_image[hidx,widx,0],out_image[hidx,widx,1]\
+                        #                 ,out_image[hidx,widx,2],out_image[hidx,widx,3],out_ndvi[hidx,widx],crop_type])
+                        pix_lst.append([i,pix_id,date,out_image[hidx,widx,0],out_image[hidx,widx,1]\
+                                        ,out_image[hidx,widx,2],out_image[hidx,widx,3],out_ndvi[hidx,widx],crop_type])
+                        pix_id+=1
 
-            # print('After random choice: ',out_image.shape)
+            else:
 
-            pix_id=0
+                # get pixel by random choice
+                out_image, out_ndvi = get_data_randomchoice(out_image, out_ndvi, num_pix=500)
 
-            # for idx in range(out_image.shape[0]):
-            #     # if np.any(out_image[hidx,widx,:]) != 0:
-            #     writer.writerow([i,pix_id,date,out_image[idx,0],out_image[idx,1]\
-            #                     ,out_image[idx,2],out_image[idx,3],out_ndvi[idx],crop_type])
-            #     pix_id+=1
+                if out_image.shape[0] != 500:
+                    print('After random choice: ', out_image.shape)
 
-            # pix_lst = []
-            for idx in range(out_image.shape[0]):
-                pix_lst.append([i,pix_id,date,out_image[idx,0],out_image[idx,1]\
-                                ,out_image[idx,2],out_image[idx,3],out_ndvi[idx],crop_type])
-                pix_id+=1
+                pix_id=0
+
+                # for idx in range(out_image.shape[0]):
+                #     # if np.any(out_image[hidx,widx,:]) != 0:
+                #     writer.writerow([i,pix_id,date,out_image[idx,0],out_image[idx,1]\
+                #                     ,out_image[idx,2],out_image[idx,3],out_ndvi[idx],crop_type])
+                #     pix_id+=1
+
+                
+                for idx in range(out_image.shape[0]):
+                    pix_lst.append([i,pix_id,date,out_image[idx,0],out_image[idx,1]\
+                                    ,out_image[idx,2],out_image[idx,3],out_ndvi[idx],crop_type])
+                    pix_id+=1
+
+    print("polygon removed: ", remove_count)
+    print('lenght of pix lst', len(pix_lst))
 
     return pix_lst
 
@@ -336,20 +367,37 @@ def read_json(json_fl):
 
     return json_data
 
+def save_csv(lst, schema, out_fl, get_label):
+
+    if get_label:
+        df = pl.DataFrame(lst, schema=schema)
+    else:
+        print(len(lst))
+        df = pl.DataFrame(lst, schema=schema)
+        # df = pd.DataFrame(pix_lst, columns=columns)
+    print('out dataframe shape: ', df.shape)
+
+    print(df.head(5))
+
+    df.write_csv(out_fl, has_header=True)
+
+    del df
+
 def read_dataset(tile_name='tile01', get_label=True, field_fl = '', im_size=8000):
     data_dir = '/home/geoint/tri/Planet_khuong/'
     out_dir = '/home/geoint/tri/Planet_khuong/output/csv/'
 
     im_size = im_size
-    start_hidx = 0000
-    start_widx = 0000
+    # start_hidx = 6000
+    # start_widx = 6000
 
     if get_label:
         data_name = 'label'
-        out_fl = f'{out_dir}dpc-unet-pixel-{data_name}-200perPoly-label-0703.hdf5'
+        # out_fl = f'{out_dir}dpc-unet-pixel-{tile_name}-{data_name}-32x32-label-0802.csv'
+        out_fl = f'{out_dir}dpc-unet-pixel-{tile_name}-{data_name}-500p-label-0803.csv'
     else:
         data_name = 'all'
-        out_fl = f'{out_dir}dpc-unet-pixel-tile02-{data_name}-{im_size}-{start_hidx}_{start_widx}.hdf5'
+        
     
     pix_lst = []
     
@@ -361,150 +409,72 @@ def read_dataset(tile_name='tile01', get_label=True, field_fl = '', im_size=8000
     if get_label:
         # writer.writerow(['id','pixid','date','blue','green','red','nir','ndvi','class'])
         columns = ['id','pixid','date','blue','green','red','nir','ndvi','class']
-        schema=[("id", pl.Int64), ("pixid", pl.Int64), ("date", pl.Utf8), ("blue", pl.Int64), ("green", pl.Int64), ("red", pl.Int64), ("nir", pl.Int64), ("nvdi", pl.Float64), ("class", pl.Utf8)]
+        schema=[("id", pl.Int64), ("pixid", pl.Int64), ("date", pl.Utf8), ("blue", pl.Int64), ("green", pl.Int64), ("red", pl.Int64), ("nir", pl.Int64), ("ndvi", pl.Float64), ("class", pl.Utf8)]
     else:
         # writer.writerow(['date','blue','green','red','nir','ndvi'])
         columns = ['date','blue','green','red','nir','ndvi']
-        schema=[("date", pl.Utf8), ("blue", pl.Int64), ("green", pl.Int64), ("red", pl.Int64), ("nir", pl.Int64), ("nvdi", pl.Float64)]
+        schema=[("date", pl.Utf8), ("blue", pl.Int64), ("green", pl.Int64), ("red", pl.Int64), ("nir", pl.Int64), ("ndvi", pl.Float64)]
 
     if tile_name == 'tile01':
-        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/*-21/'))
+        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/output/median_composite/tile01/*_median_composit.tiff'))
+        label_fl=f'{data_dir}/output/4906044_1459221_2021-09-16_2447_BGRN_SR_mask_segs_reclassified.tif'
+
+        # data_ts = []
+        tic_month = time.time()
+        for monthly_fl in master_dir:
+
+            date = re.search(r'/median_composite/tile01/tile01-(.*?)_median_composit.tiff', monthly_fl).group(1)
+            print(date)
+
+            # img = read_imagery(monthly_fl, mask=False)
+
+            if get_label:
+                label_lst = get_field_data(field_fl, monthly_fl, date, label_lst)
+                save_csv(label_lst, schema, out_fl, get_label)
+            else:
+
+                for start_hidx in range(0, 8000, 2000):
+                    for start_widx in range(0, 8000, 2000):
+                        pix_lst = get_pix_data(monthly_fl, date, pix_lst, im_size, start_hidx, start_widx)
+                        
+
+        out_fl = f'{out_dir}planet4month-pixel-{tile_name}-{data_name}-{im_size}-{start_hidx}_{start_widx}.csv'
+        save_csv(pix_lst, schema, out_fl, get_label)
+        pix_lst = []
+
+        print(f'time to run preprocessing 1 file: {time.time()-tic_month} seconds')
+        
+
+    elif tile_name == 'tile02':
+        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/output/median_composite/tile02/*_median_composit.tiff'))
         label_fl=f'{data_dir}/output/4906044_1459221_2021-09-16_2447_BGRN_SR_mask_segs_reclassified.tif'
 
         data_ts = []
         tic_month = time.time()
-        for monthly_dir in master_dir:
-            month = monthly_dir[-7:-1]
-            pl_dir = f'{str(monthly_dir)}/files/PSOrthoTile/'
-            img_fls = sorted(glob.glob(f'{pl_dir}/*/'))
-            count=0
+        for monthly_fl in master_dir:
 
-            tic_date = time.time()
-            for img_dir in img_fls:
-                
-                # if count == 5:
-                #     break
-                json_dir = sorted(glob.glob(f'{img_dir}/*.json'))
-                dir = sorted(glob.glob(f'{img_dir}/analytic_sr_udm2/*.tif'))
-                fl = [x for x in dir if 'SR' in x]
-                cloud_fl = [x for x in dir if x[-8:-4] == 'udm2']
+            date = re.search(r'/median_composite/tile02/tile02-(.*?)_median_composit.tiff', monthly_fl).group(1)
+            # img = read_imagery(monthly_fl, mask=False)
 
-                ## get metadata for overview and filtering for high-quality images
-                metadata = read_json(json_dir[0])
-                date = metadata['properties']['acquired']
-                black_fill = metadata['properties']['black_fill']
-                cloud_pct = metadata['properties']['cloud_percent']
-                light_haze_pct = metadata['properties']['light_haze_percent']
-                heavy_haze_pct = metadata['properties']['heavy_haze_percent']
+            if get_label:
+                label_lst = get_field_data(field_fl, monthly_fl, date, label_lst)
+                save_csv(label_lst, schema, out_fl, get_label)
+            else:
+                for start_hidx in range(0, 8000, 2000):
+                    for start_widx in range(0, 8000, 2000):
+                        pix_lst = get_pix_data(monthly_fl, date, pix_lst, im_size, start_hidx, start_widx)
 
-                if (float(black_fill) < 0.15 and cloud_pct < 12 and light_haze_pct < 5 and heavy_haze_pct < 3):
+        out_fl = f'{out_dir}planet4month-pixel-{tile_name}-{data_name}-{im_size}-{start_hidx}_{start_widx}.csv'
+        save_csv(pix_lst, schema, out_fl, get_label)
+        pix_lst = []
 
-                    print('image date: ', date)
+        print(f'time to run preprocessing 1 file: {time.time()-tic_month} seconds')
 
-                    img = read_imagery(fl[0], mask=False)
-                    cloud = read_udm_mask(cloud_fl[0])
-                    # ndvi = cal_ndvi(img, cloud)
 
-                    if get_label:
-                        # get_field_data(field_fl, fl[0], date, writer)
-                        label_lst = get_field_data(field_fl, fl[0], date, label_lst)
-                    else:
-                        # pix_lst = get_pix_data(fl[0], date, writer, pix_lst, im_size, start_hidx, start_widx)
-                        pix_lst = get_pix_data(fl[0], date, pix_lst, im_size, start_hidx, start_widx)
+    print(f'time to run preprocessing all pixels: {time.time()-tic_month} seconds')
+        
 
-                    # print(np.unique(cloud[0], return_counts=True))
-                    for band in range(img.shape[0]):
-                        img[band,:,:] = img[band,:,:]*cloud[0]
-
-                    data_ts.append(img)
-                
-                    count+=1
-
-                print(f'time to run 1 image date: {time.time()-tic_date} seconds')
-
-            print(f'time to run 1 month: {time.time()-tic_month} seconds')
-
-    elif tile_name == 'tile02':
-        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/Tile1459222*/'), reverse=True)
-
-        data_ts = []
-        tic_month = time.time()
-
-        count=0
-        for monthly_dir in master_dir:
-            month = monthly_dir[-7:-1]
-            pl_dir = f'{str(monthly_dir)}/PSOrthoTile/'
-            img_fls = sorted(glob.glob(f'{pl_dir}/*_BGRN_SR.tif'))
-            
-
-            tic_date = time.time()
-            for img_fl in img_fls:
-                
-                name = re.search(r'/PSOrthoTile/(.*?)_BGRN_SR.tif', img_fl).group(1)
-                # json_dir = sorted(glob.glob(f'{img_fl}/{name}_metadata.json'))
-
-                json_fl = os.path.join(os.path.dirname(img_fl), f'{name}_metadata.json')
-
-                # print(json_fl)
-
-                cloud_fl = os.path.join(os.path.dirname(img_fl), f'{name}_BGRN_DN_udm.tif')
-
-                # dir = sorted(glob.glob(f'{img_dir}/analytic_sr_udm2/*.tif'))
-                # fl = [x for x in dir if 'SR' in x]
-                # cloud_fl = [x for x in dir if x[-8:-4] == 'udm2']
-
-                ## get metadata for overview and filtering for high-quality images
-                metadata = read_json(json_fl)
-                date = metadata['properties']['acquired']
-                black_fill = metadata['properties']['black_fill']
-                cloud_pct = metadata['properties']['cloud_percent']
-                light_haze_pct = metadata['properties']['light_haze_percent']
-                heavy_haze_pct = metadata['properties']['heavy_haze_percent']
-
-                if (float(black_fill) < 0.20 and cloud_pct < 15 and light_haze_pct < 8 and heavy_haze_pct < 5):
-
-                    print('image date: ', date)
-
-                    img = read_imagery(img_fl, mask=False)
-                    cloud = read_udm_mask(cloud_fl)
-                    # ndvi = cal_ndvi(img, cloud)
-
-                    if get_label:
-                        # get_field_data(field_fl, fl[0], date, writer)
-                        label_lst = get_field_data(field_fl, img_fl, date, label_lst)
-                    else:
-                        # pix_lst = get_pix_data(fl[0], date, writer, pix_lst, im_size, start_hidx, start_widx)
-                        pix_lst = get_pix_data(img_fl, date, pix_lst, im_size, start_hidx, start_widx)
-
-                    # print(np.unique(cloud[0], return_counts=True))
-                    for band in range(img.shape[0]):
-                        img[band,:,:] = img[band,:,:]*cloud[0]
-
-                    data_ts.append(img)
-                
-                    count+=1
-
-                print(f'time to run 1 image date: {time.time()-tic_date} seconds')
-
-            print('total images: ', count)
-            print(f'time to run 1 month: {time.time()-tic_month} seconds')
-
-    
-
-    if get_label:
-        df = pl.DataFrame(label_lst, schema=schema)
-    else:
-        print(len(pix_lst))
-        df = pl.DataFrame(pix_lst, schema=schema)
-        # df = pd.DataFrame(pix_lst, columns=columns)
-    print('out dataframe shape: ', df.shape)
-
-    print(df.head(5))
-
-    df = df.to_numpy()
-
-    print(df.shape)
-
+    # df = df.to_numpy()
     # with open(out_fl, 'wb') as file:
     #     pickle.dump(df, file, pickle.HIGHEST_PROTOCOL)
 
@@ -517,39 +487,22 @@ def read_dataset(tile_name='tile01', get_label=True, field_fl = '', im_size=8000
 
     # return out_ts, label
 
-    return df
+    
+
+    # return df
 
 
 def run():
     #Loading original image
 
-    # pl_file = \
-    #         '/home/geoint/tri/Planet_khuong/08-21/files/PSOrthoTile/4854347_1459221_2021-08-31_241e/analytic_sr_udm2/4854347_1459221_2021-08-31_241e_BGRN_SR.tif'
     # field_fl = '/home/geoint/tri/Planet_khuong/Field_Survey_Polygons/Field_Survey_Polygons.shp'
-    # field_fl = '/home/geoint/tri/Planet_khuong/output/raster_polygon_analysis/training_kmean_sam_polygons.shp'
-    # field_fl = '/home/geoint/tri/Planet_khuong/output/other/fullmask.shp'
-    field_fl = '/home/geoint/tri/Planet_khuong/output/training-data/train-polygons.shp'
-
-    # name = pl_file[-43:-4]
-    # date = pl_file[-27:-12]
-    # print(date)
-    # planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
-    # ref_im = rxr.open_rasterio(pl_file)
-
-    # if planet_data.ndim > 2:
-    #     planet_data = np.transpose(planet_data, (1,2,0))
-
-    # ts_arr, mask_arr = read_dataset(tile_name='tile01')
-
-    # size = 8000
-    # originImg = planet_data[:size,:size,:]
-
-    # out_raster, out_mask = get_field_data(field_fl, pl_file)
+    # field_fl = '/home/geoint/tri/Planet_khuong/output/training-data/training-data-0802.shp'
+    field_fl = '/home/geoint/tri/Planet_khuong/output/training-data/large-poly.shp'
 
     tic = time.time()
 
     im_size = 2000
-    dataframe = read_dataset(tile_name='tile02', get_label=False, field_fl=field_fl, im_size = im_size)
+    dataframe = read_dataset(tile_name='tile01', get_label=False, field_fl=field_fl, im_size = im_size)
 
     print("time to run csv output: ", time.time() - tic)
     print("Finish 1D time series output!")

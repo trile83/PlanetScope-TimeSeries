@@ -33,7 +33,7 @@ torch.backends.cudnn.benchmark = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='unet', type=str, help='encoder for the DPC')
-parser.add_argument('--model', default='biconvlstm', type=str, help='convlstm, dpc-unet, unet')
+parser.add_argument('--model', default='convgru', type=str, help='convlstm, dpc-unet, unet')
 parser.add_argument('--dataset', default='tile01', type=str, help='tile01, tile02')
 parser.add_argument('--seq_len', default=6, type=int, help='number of frames in each video block')
 parser.add_argument('--num_seq', default=4, type=int, help='number of video blocks')
@@ -54,7 +54,7 @@ parser.add_argument('--train_what', default='all', type=str)
 parser.add_argument('--img_dim', default=64, type=int)
 parser.add_argument('--ts_length', default=10, type=int)
 parser.add_argument('--pad_size', default=0, type=int)
-parser.add_argument('--num_classes', default=5, type=int)
+parser.add_argument('--num_classes', default=4, type=int)
 
 
 def rescale_truncate(image):
@@ -222,7 +222,6 @@ def get_chunks(windows, num_seq):
 
     return all_arr
 
-
 def reverse_chunks(chunks, num_seq):
     '''
     reverse the chunk code -> to window size
@@ -281,10 +280,17 @@ def read_imagery(pl_file, mask=False):
     img_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
     ref_im = rxr.open_rasterio(pl_file)
 
+    # if mask:
+    #     img_data[img_data==3] = 0
+    #     img_data[img_data==4] = 3
+    #     img_data[img_data==5] = 4
+
+    #     return img_data
+    
     if mask:
-        img_data[img_data==3] = 0
-        img_data[img_data==4] = 3
-        img_data[img_data==5] = 4
+        img_data = np.nan_to_num(img_data, nan=0.0)
+
+        print(np.unique(img_data))
 
         return img_data
 
@@ -295,67 +301,29 @@ def read_imagery(pl_file, mask=False):
 
         return img_data, ref_im
 
-def read_udm_mask(cloud_fl):
 
-    cloud_data = np.squeeze(rxr.open_rasterio(cloud_fl, masked=True).values)
-    # mask_data = np.where(cloud_data[0]==1,True,False)
-
-    return cloud_data
-
-def read_json(json_fl):
-    
-    with open(json_fl, 'r') as f:
-        json_data = json.load(f)
-
-    # print(json_data)
-
-    return json_data
 
 def read_dataset(tile_name='tile01'):
     data_dir = '/home/geoint/tri/Planet_khuong/'
+
+    
     if tile_name == 'tile01':
-        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/*-21/'))
-        label_fl=f'{data_dir}/output/4906044_1459221_2021-09-16_2447_BGRN_SR_mask_segs_reclassified.tif'
+        master_dir = sorted(glob.glob('/home/geoint/tri/Planet_khuong/output/median_composite/*_median_composit.tiff'))
+        label_fl=f'{data_dir}output/training-data/label-tile01-0802.tif'
 
         data_ts = []
-        for monthly_dir in master_dir:
-            month = monthly_dir[-7:-1]
-            pl_dir = f'{str(monthly_dir)}/files/PSOrthoTile/'
-            img_fls = sorted(glob.glob(f'{pl_dir}/*/'))
-            count=0
-            for img_dir in img_fls:
-                
-                if count == 5:
-                    break
-                json_dir = sorted(glob.glob(f'{img_dir}/*.json'))
-                dir = sorted(glob.glob(f'{img_dir}/analytic_sr_udm2/*.tif'))
-                fl = [x for x in dir if 'SR' in x]
-                cloud_fl = [x for x in dir if x[-8:-4] == 'udm2']
+        for monthly_fl in master_dir:
 
-                ## get metadata for overview and filtering for high-quality images
-                metadata = read_json(json_dir[0])
-                date = metadata['properties']['acquired']
-                black_fill = metadata['properties']['black_fill']
-                cloud_pct = metadata['properties']['cloud_percent']
-                light_haze_pct = metadata['properties']['light_haze_percent']
-                heavy_haze_pct = metadata['properties']['heavy_haze_percent']
+            print(monthly_fl)
 
-                if (float(black_fill) < 0.15 and cloud_pct < 12 and light_haze_pct < 5 and heavy_haze_pct < 3):
+            img, ref_im = read_imagery(monthly_fl, mask=False)
+            data_ts.append(img)
 
-                    print('image date: ', date)
-
-                    img, ref_im = read_imagery(fl[0], mask=False)
-                    cloud = read_udm_mask(cloud_fl[0])
-
-                    # print(np.unique(cloud[0], return_counts=True))
-                    for band in range(img.shape[0]):
-                        img[band,:,:] = img[band,:,:]*cloud[0]
-
-                    data_ts.append(img)
-                
-                    count+=1
+            print("img shape: ", img.shape)
 
     out_ts = np.stack(data_ts, axis=0)
+
+    del data_ts
 
     label = read_imagery(label_fl, mask=True)
 
@@ -364,7 +332,7 @@ def read_dataset(tile_name='tile01'):
     print('out ts shape: ', out_ts.shape)
     print('label shape: ', label.shape)
 
-    return out_ts, label, ref_im
+    return out_ts, label, rxr.open_rasterio(label_fl)
 
 
 def main():
@@ -405,7 +373,7 @@ def main():
  
         model = nn.DataParallel(model)
 
-        model_checkpoint = f'{str(model_dir)}convlstm__planet_4band_epoch_70.pth'
+        model_checkpoint = f'{str(model_dir)}convlstm_planet_4band_0802_epoch_63.pth'
         if torch.cuda.is_available():
             model = model.to(cuda)
 
@@ -420,7 +388,7 @@ def main():
         prediction = inference.sliding_window_tiler(
             xraster=temporary_tif,
             model=model,
-            n_classes=5,
+            n_classes=args.num_classes,
             overlap=0.5,
             batch_size=16,
             standardization='local',
@@ -459,7 +427,7 @@ def main():
         prediction = inference.sliding_window_tiler(
             xraster=temporary_tif,
             model=model,
-            n_classes=5,
+            n_classes=args.num_classes,
             overlap=0.5,
             batch_size=16,
             standardization='local',
@@ -484,7 +452,7 @@ def main():
         model = nn.DataParallel(model)
  
         ### 10 bands
-        model_checkpoint = f'{str(model_dir)}convgru__planet_4band_epoch_66.pth'
+        model_checkpoint = f'{str(model_dir)}convgru_planet_4band_0802_epoch_58.pth'
         if torch.cuda.is_available():
             model = model.to(cuda)
 
@@ -501,7 +469,7 @@ def main():
         prediction = inference.sliding_window_tiler(
             xraster=temporary_tif,
             model=model,
-            n_classes=5,
+            n_classes=args.num_classes,
             overlap=0.5,
             batch_size=16,
             standardization='local',
@@ -526,28 +494,28 @@ def main():
 
     data_dir = '/home/geoint/tri/Planet_khuong/output/'
 
-    plt.figure(figsize=(20,20))
-    plt.subplot(1,2,1)
-    plt.title("Image")
-    image = np.transpose(train_ts_set[5,:3,:,:], (1,2,0))
+    # plt.figure(figsize=(20,20))
+    # plt.subplot(1,2,1)
+    # plt.title("Image")
+    # image = np.transpose(train_ts_set[5,:3,:,:], (1,2,0))
     
-    image= rescale_image(xr.where(image > 0, image, 100))
-    # image = np.transpose(z_mean[0,:,:,:], (1,2,0))
-    plt.imshow(rescale_truncate(image))
-    # # plt.savefig(f"{str(data_dir)}{ts_name}-input.png")
-    # plt.subplot(1,3,2)
-    # plt.title("Segmentation Label")
-    # # image = np.transpose(train_mask_set[:,:], (0,1))
-    # image = train_mask_set
-    # plt.imshow(image)
-    # # plt.savefig(f"{str(data_dir)}{ts_name}-label.png")
+    # image= rescale_image(xr.where(image > 0, image, 100))
+    # # image = np.transpose(z_mean[0,:,:,:], (1,2,0))
+    # plt.imshow(rescale_truncate(image))
+    # # # plt.savefig(f"{str(data_dir)}{ts_name}-input.png")
+    # # plt.subplot(1,3,2)
+    # # plt.title("Segmentation Label")
+    # # # image = np.transpose(train_mask_set[:,:], (0,1))
+    # # image = train_mask_set
+    # # plt.imshow(image)
+    # # # plt.savefig(f"{str(data_dir)}{ts_name}-label.png")
 
-    plt.subplot(1,2,2)
-    plt.title(f"Segmentation Prediction")
-    image = prediction
-    plt.imshow(image[4000:5000,4000:5000])
-    plt.savefig(f"{str(data_dir)}{ts_name}-{model_option}-4000-4000.png", dpi=300, bbox_inches='tight')
-    plt.close()
+    # plt.subplot(1,2,2)
+    # plt.title(f"Segmentation Prediction")
+    # image = prediction
+    # plt.imshow(image[4000:5000,4000:5000])
+    # plt.savefig(f"{str(data_dir)}{ts_name}-{model_option}-4000-4000.png", dpi=300, bbox_inches='tight')
+    # plt.close()
 
     #save Tiff file output
     # Drop image band to allow for a merge of mask
@@ -559,7 +527,7 @@ def main():
 
     prediction = xr.DataArray(
                 np.expand_dims(prediction, axis=-1),
-                name='otcb',
+                name=model_option,
                 coords=ref_im.coords,
                 dims=ref_im.dims,
                 attrs=ref_im.attrs
@@ -567,7 +535,7 @@ def main():
 
     # prediction = prediction.where(xraster != -9999)
 
-    prediction.attrs['long_name'] = ('otcb')
+    prediction.attrs['long_name'] = ('conv')
     prediction.attrs['model_name'] = (model_option)
     prediction = prediction.transpose("band", "y", "x")
 
@@ -582,7 +550,7 @@ def main():
 
     # Save COG file to disk
     prediction.rio.to_raster(
-        f'{data_dir}{ts_name}-{model_option}.tiff',
+        f'{data_dir}{ts_name}-{model_option}-0802.tiff',
         BIGTIFF="IF_SAFER",
         compress='LZW',
         # num_threads='all_cpus',

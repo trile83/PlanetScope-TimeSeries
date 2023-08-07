@@ -37,7 +37,11 @@ def prepare_data(ts_file, im_size=2000):
 
     big_im = ts_file
     big_df = pl.read_csv(big_im)
-    X_im = big_df.select(['blue','green','red','nir','ndvi'])
+    X_im = big_df.select(['blue','green','red','nir','nvdi'])
+    X_im = X_im.to_pandas()
+    # X_im = X_im.replace(0, -10000)
+
+
     X_array = X_im.to_numpy()
     print("X_array shape: ", X_array.shape)
 
@@ -46,7 +50,7 @@ def prepare_data(ts_file, im_size=2000):
         X_lst.append(X_array[i:i+(im_size*im_size),:])
         
     X = np.concatenate((X_lst),axis=1)
-    X[np.isnan(X)] = 0
+    X[np.isnan(X)] = -10000
 
     print("X shape: ", X.shape)
 
@@ -84,7 +88,7 @@ def predict(ts_file):
     model = LSTMClassifier(input_dim, hidden_dim, layer_dim, output_dim)
     model = model.cuda()
 
-    checkpoint = 'output/checkpoints/lstm-best-0530.pth'
+    checkpoint = 'output/checkpoints/lstm-best-0803.pth'
     model.load_state_dict(torch.load(checkpoint))
 
     for i, x in enumerate(trn_dl):

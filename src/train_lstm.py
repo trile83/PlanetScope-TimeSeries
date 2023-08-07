@@ -7,6 +7,8 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torch.optim.lr_scheduler import _LRScheduler
+import pickle
+import polars as pl
 
 from lstm.lstm import LSTMClassifier
 
@@ -31,12 +33,28 @@ def create_loaders(train_ds, valid_ds, bs=512, jobs=0):
 
 def prepare_data(training_file):
 
-    training_df = pd.read_csv(training_file)
+    # with open(training_file, 'rb') as file:
+    #     training_df = pickle.load(file)
+
+    big_df = pl.read_csv(training_file, has_header=True)
+    # X_im = big_df.select(['blue','green','red','nir','nvdi','class'])
+    # X_im = X_im.to_pandas()
+
+    X_im = big_df
+
+    print(X_im.shape)
+    print(X_im.head(20))
+
+    training_df = X_im
+    del X_im
+
     print(training_df['class'].unique())
     crop = training_df['class']
+
+    training_df = training_df.to_pandas()
     training_df['class_id'] = training_df['class']
     training_df['class_id'] = training_df['class_id'].replace(
-        ['other','corn','soybean','fall-crop','other-crop','water'],
+        ['other','corn','soybean','water','fall-crop','other-crop'],
         [0,1,2,3,4,5]
         )
     Y = training_df['class_id'].values
@@ -54,11 +72,29 @@ def prepare_data(training_file):
     # Y=Y[:665*64]
 
 
-    for i in range(0,len(X),729*64): ## 729 polygons with 8x8 (64) chip in each polygon, new mask
-        X_all.append(X[i:i+729*64,:])
+    # for i in range(0,len(X),729*64): ## 729 polygons with 8x8 (64) chip in each polygon, new mask
+    #     X_all.append(X[i:i+729*64,:])
         
+    # X = np.concatenate((X_all),axis=1)    
+    # Y=Y[:729*64]
+
+    # for i in range(0,len(X),666*200): ## 666 polygons with 200 pixels in each polygon, new mask
+    #     X_all.append(X[i:i+666*200,:])
+        
+    # X = np.concatenate((X_all),axis=1)    
+    # Y=Y[:666*200]
+
+    # for i in range(0,len(X),1069*32*32): ## 1069 polygons with 32x32 pixels in each polygon, new mask
+    #     X_all.append(X[i:i+1069*32*32,:])
+        
+    # X = np.concatenate((X_all),axis=1)    
+    # Y=Y[:1069*32*32]
+
+    for i in range(0,len(X),708*500): ## 708 polygons with 500 pixels in each polygon, new mask
+        X_all.append(X[i:i+708*500,:])
+                
     X = np.concatenate((X_all),axis=1)    
-    Y=Y[:729*64]
+    Y=Y[:708*500]
 
     print('X shape: ',X.shape)
     print('Y shape: ',Y.shape)
@@ -66,6 +102,7 @@ def prepare_data(training_file):
     X_band = []
 
     for i in range(0,X.shape[1],5):
+        print(X[:,i:i+5].shape)
         X_band.append(X[:,i:i+5])
 
     X_out = np.stack(X_band)
@@ -77,7 +114,7 @@ def prepare_data(training_file):
 
     X = X_out
 
-    class_number=6 # other-crop, corn, soybean, fall-crop, water
+    class_number=4 # other-crop, corn, soybean, fall-crop, water
     test_size=0.2
     random_state = 42
 
@@ -87,12 +124,12 @@ def prepare_data(training_file):
     y_test = []
 
     # class_types=['other-crop','corn','soybean','fall-crop','water']
-    class_types=['other','corn','soybean','fall-crop','other-crop','water']
+    class_types=['other','corn','soybean','water','fall-crop','other-crop']
     for i in range(class_number):
         Y_class = Y[Y==i] # other-crop=0, corn=1, soybean=2, fall-crop=3, water=4
         X_class = X[Y==i]
 
-        X_class[np.isnan(X_class)] = 0
+        X_class[np.isnan(X_class)] = -10000
         
         X_train_class, X_test_class, y_train_class, y_test_class = \
             train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
@@ -145,7 +182,7 @@ def train(training_file):
     output_dim = 6
     seq_dim = 128
 
-    lr = 0.0005
+    lr = 0.0001
     n_epochs = 100
     # iterations_per_epoch = len(trn_dl)
     best_acc = 0
@@ -190,7 +227,7 @@ def train(training_file):
         if acc > best_acc:
             trials = 0
             best_acc = acc
-            torch.save(model.state_dict(), 'output/checkpoints/lstm-best-0530.pth')
+            torch.save(model.state_dict(), 'output/checkpoints/lstm-best-0804.pth')
             print(f'Epoch {epoch} best model saved with loss: {loss}')
             print(f'Epoch {epoch} best model saved with accuracy: {best_acc:2.2%}')
         else:
@@ -202,5 +239,6 @@ def train(training_file):
 
 if __name__ == '__main__':
 
-    training_file = 'dpc-unet-pixel-label-label-0529.csv'
+    # training_file = 'dpc-unet-pixel-label-200perPoly-label-0703.pkl'
+    training_file = 'dpc-unet-pixel-tile01-label-500p-label-0803.csv'
     train(training_file)

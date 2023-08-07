@@ -35,6 +35,10 @@ import cv2
 from skimage import exposure
 import logging
 import tifffile
+import re
+import rasterio as rio
+import xarray as xr
+import rioxarray as rxr
 
 import sys
 sys.path.append("..")
@@ -92,22 +96,76 @@ def show_anns(anns):
         # ax.imshow(np.dstack((img, m*0.35)))
         ax.imshow(np.dstack((img, m*0.70)))
 
+
+def save_raster(ref_im, prediction, name):
+    ref_im = ref_im.transpose("y", "x", "band")
+
+    ref_im = ref_im.drop(
+            dim="band",
+            labels=ref_im.coords["band"].values[1:],
+            drop=True
+        )
+    
+    print(ref_im.dims)
+    print(prediction.shape)
+    
+    prediction = xr.DataArray(
+                # prediction,
+                np.expand_dims(prediction, axis=-1),
+                name='edge',
+                coords=ref_im.coords,
+                dims=ref_im.dims,
+                attrs=ref_im.attrs
+            )
+
+    # prediction = prediction.where(xraster != -9999)
+
+    prediction.attrs['long_name'] = ('edge')
+    prediction = prediction.transpose("band", "y", "x")
+
+    # Set nodata values on mask
+    nodata = prediction.rio.nodata
+    prediction = prediction.where(ref_im != nodata)
+    prediction.rio.write_nodata(
+        255, encoded=True, inplace=True)
+
+    # TODO: ADD CLOUDMASKING STEP HERE
+    # REMOVE CLOUDS USING THE CURRENT MASK
+
+    # Save COG file to disk
+    prediction.rio.to_raster(
+        f'output/{name}-0727.tiff',
+        BIGTIFF="IF_SAFER",
+        compress='LZW',
+        # num_threads='all_cpus',
+        driver='GTiff',
+        dtype='int32'
+    )
+
+
+
 if __name__ == '__main__':
 
         
-    image = cv2.imread('output/20210918.png')  #Try houses.jpg or neurons.jpg
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # image = cv2.imread('output/20210918.png')  #Try houses.jpg or neurons.jpg
+    # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-    print(image.shape)
-    print(image.dtype)
+    # print(image.shape)
+    # print(image.dtype)
 
     file_type = 'dakota'
 
     # try tiff file
-    pl_file = \
-            '/home/geoint/tri/Planet_khuong/07-21/files/PSOrthoTile/4660870_1459221_2021-07-05_100a/analytic_sr_udm2/4660870_1459221_2021-07-05_100a_BGRN_SR.tif'
+    pl_file_1 = \
+            '/home/geoint/tri/Planet_khuong/Tile1459221_Oct2021_psorthotile_analytic_sr_udm2/PSOrthoTile/5049414_1459221_2021-10-30_2445_BGRN_SR.tif'
 
-    pl_file_1 = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459321_2021-09-18_242d_BGRN_SR.tif'
+    # pl_file_ref = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459321_2021-09-18_242d_BGRN_SR.tif'
+
+    pl_file_ref = '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+
+    pl_file_1 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d-0727.tiff'
+
+    name = "edge"
 
     if file_type == 'senegal':
         pl_file = '/home/geoint/tri/nasa_senegal/cassemance/Tappan01_WV02_20110430_M1BS_103001000A27E100_data.tif'
@@ -116,8 +174,61 @@ if __name__ == '__main__':
         pl_file = pl_file_1
 
 
-    # name = pl_file[-43:-4]
-    image = tifffile.imread(pl_file)
+    # name = pl_file[-43:-5]
+    # image = tifffile.imread(pl_file)
+
+
+    pl_file_1 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-blue.tiff'
+    pl_file_2 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-red.tiff'
+    pl_file_3 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-green.tiff'
+
+    pl_file_4 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-nir.tiff'
+
+    name = re.search(r'/output/(.*?)_BGRN', pl_file_1).group(1)
+    blue_edge = tifffile.imread(pl_file_1)
+    red_edge = tifffile.imread(pl_file_2)
+    green_edge = tifffile.imread(pl_file_3)
+
+    nir_edge = tifffile.imread(pl_file_4)
+
+    # red_edge[red_edge > 400] = 1
+    # red_edge[red_edge<= 400] = 0
+
+    # blue_edge[blue_edge > 200] = 1
+    # blue_edge[blue_edge<= 200] = 0
+
+    # green_edge[green_edge > 200] = 1
+    # green_edge[green_edge<= 200] = 0
+
+    # nir_edge[nir_edge > 0.05] = 1
+    # nir_edge[nir_edge<= 0.05] = 0
+
+    # red_edge = rescale_image(red_edge)
+    # nir_edge = rescale_image(nir_edge)
+
+    image = blue_edge+green_edge+red_edge
+
+    image[image > 1000] = 7000
+    image[image<= 1000] = 200
+
+    # image = np.stack((blue_edge, red_edge, green_edge), axis=2)
+    # image= image*10000
+
+    # # image = nir_edge+red_edge
+    # # # image = nir_edge
+    # # # image[image>=0.12]=1
+    # # # image[image<0.12]=0
+
+    # # # image = red_edge
+    # # image[image>=0.08]=1
+    # # image[image<0.08]=0
+
+    # ref_im = rxr.open_rasterio(pl_file_ref)
+
+    # save_raster(ref_im, image, name)
+
+
+    
 
     # image = image[:1000,:1000,1:4]
 
@@ -128,8 +239,8 @@ if __name__ == '__main__':
 
     # image= image_clone
     
-    print(image.dtype)
-    print(image.shape)
+    # print(image.dtype)
+    # print(image.shape)
 
     # plt.figure(figsize=(10,10))
     # plt.imshow(rescale_truncate(rescale_image(image)))
@@ -137,9 +248,19 @@ if __name__ == '__main__':
     # plt.axis('off')
     # plt.show()
 
-    image[image<-9999] = -1
+    # image[image<-9999] = -10000
 
-    image = image.astype('int8')
+    # image = image.astype('int8')
+
+
+    # pl_file = \
+    #         '/home/geoint/tri/Planet_khuong/Tile1459221_Oct2021_psorthotile_analytic_sr_udm2/PSOrthoTile/5049414_1459221_2021-10-30_2445_BGRN_SR.tif'
+    
+    # pl_file = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+
+    pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile02/tile02-09_median_composit.tiff'
+    
+    name = re.search(r'/tile02/(.*?).tiff', pl_file).group(1)
 
     model_type = "vit_l"
 
@@ -149,8 +270,6 @@ if __name__ == '__main__':
         sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_l_0b3195.pth"
     elif model_type == "vit_b":
         sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_b_01ec64.pth"
-
-    device = "cuda"
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     sam_kwargs = {
@@ -173,15 +292,15 @@ if __name__ == '__main__':
 
     if file_type == 'senegal':
         mask = f'output/sam/senegal/Tappan01_WV02_20110430_M1BS_103001000A27E100_data-segment-{model_type}.tif'
-        sam.generate(pl_file, mask)
+        sam.generate(pl_file, mask, batch=True, foreground=True, erosion_kernel=(3, 3), mask_multiplier=255)
 
         shapefile = f'output/sam/senegal/Tappan01_WV02_20110430_M1BS_103001000A27E100_data-segment-{model_type}.shp'
         sam.tiff_to_vector(mask, shapefile)
     else:
-        mask = f'output/sam/other-{model_type}.tif'
+        mask = f'output/sam/{name}-{model_type}-composit-0804.tif'
         sam.generate(pl_file, mask)
 
-        shapefile = f'output/sam/other-{model_type}.shp'
+        shapefile = f'output/sam/{name}-{model_type}-composit-0804.shp'
         sam.tiff_to_vector(mask, shapefile)
 
 
