@@ -9,17 +9,16 @@ from sklearn.metrics import accuracy_score
 from sklearn.metrics import confusion_matrix,classification_report
 from sklearn.metrics import cohen_kappa_score
 from sklearn.metrics import f1_score
-import seaborn as sns
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 import polars as pl
-import matplotlib.colors as pltc
 import tifffile
 import logging
 from skimage import exposure
 import re
 import pickle
 import glob
-import polars
+
 
 np.set_printoptions(suppress=True)
 
@@ -58,15 +57,41 @@ def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
         logging.info(f'Skipping based on invalid option: {rescale_type}')
     return image
 
+def standardize_image(
+    image,
+    standardization_type: str,
+    mean: list = None,
+    std: list = None
+):
+    """
+    Standardize image within parameter, simple scaling of values.
+    Loca, Global, and Mixed options.
+    """
+    image = image.astype(np.float32)
+    mask = np.where(image[0, :, :] >= 0, True, False)
 
-def train_random_forest(training_file, khuong):
+    if standardization_type == 'local':
+        for i in range(image.shape[0]):
+            image[i, :, :] = (
+                image[i, :, :] - np.mean(image[i, :, :], where=mask)) / \
+                (np.std(image[i, :, :], where=mask) + 1e-8)
+    elif standardization_type == 'global':
+        for i in range(image.shape[-1]):
+            image[:, :, i] = (image[:, :, i] - mean[i]) / (std[i] + 1e-8)
+    elif standardization_type == 'mixed':
+        raise NotImplementedError
+    return image
 
+
+def train_random_forest(training_file, khuong, scale=False):
+
+    print("Start random_forest!")
     # check if model exists
     if khuong:
         filename = 'output/model_saved/randomforest_model.sav'
     else:
         # filename = 'output/model_saved/randomforest_model_0425.sav'
-        filename = 'output/model_saved/randomforest_model_0803-1.sav'
+        filename = 'output/model_saved/randomforest_model_0818-2tile.sav'
 
     if not os.path.isfile(filename):
 
@@ -88,7 +113,7 @@ def train_random_forest(training_file, khuong):
                 #print(i,i+93*256,X[i:i+93*256,:].shape)
                 X_all.append(X[i:i+93*256,:])
                 
-            X = np.concatenate((X_all),axis=1)    
+            X = np.concatenate((X_all),axis=1)
             Y=Y[:93*256]
 
             print(X.shape)
@@ -110,7 +135,7 @@ def train_random_forest(training_file, khuong):
                 Y_class = Y[Y==i+1] #corn=1 and soybean=2
                 X_class = X[Y==i+1]
 
-                X_class[np.isnan(X_class)] = 0
+                # X_class[np.isnan(X_class)] = 0
                 
                 X_train_class, X_test_class, y_train_class, y_test_class = \
                     train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
@@ -133,81 +158,40 @@ def train_random_forest(training_file, khuong):
             y_test_all = np.concatenate(y_test, axis=0).astype('uint8')
 
         else:
-            # with open(training_file, 'rb') as file:
-            #     training_df = pickle.load(file)
-            training_df = pl.read_csv(training_file)
+
+            # training_df = pl.read_csv(training_file)
+            # training_df = pd.read_csv(training_file)
+
+            training_df_1 = pd.read_csv(training_file[0])
+            training_df_2 = pd.read_csv(training_file[1])
+
+            ## depends on the data
+            training_df_1 = training_df_1.replace(0,6)
+            training_df_1 = training_df_1.replace(1,0)
+            training_df_1 = training_df_1.replace(5,1)
+            training_df_1 = training_df_1.replace(2,7)
+            training_df_1 = training_df_1.replace(4,3)
+            training_df_1 = training_df_1.replace(6,2)
+            training_df_1 = training_df_1.replace(7,6)
+            
+            print(training_df_1['class'].unique())
+            print(training_df_2['class'].unique())
+
+            frames = [training_df_1, training_df_2]
+
+            training_df = pd.concat(frames)
+
             print(training_df['class'].unique())
-            # print(training_df['pixid'].unique())
-            crop = training_df['class']
-
-            ## use csv file
-            # training_df['class_id'] = training_df['class']
-            # training_df['class_id'] = training_df['class_id'].replace(
-            #     ['other','corn','soybean','fall-crop','other-crop','water'],
-            #     [0,1,2,3,4,5]
-            #     )
             
-            ## use pickle file
-            # training_df = training_df.with_columns((pl.col("class")).alias("class_id")) ## for polars dataframe
-
-            training_df = training_df.to_pandas()
-            # training_df = training_df.replace(0,-10000)
-            print(training_df.min)
-            training_df['class_id'] = training_df['class']
-            training_df['class_id'] = training_df['class_id'].replace(
-                ['other','corn','soybean','water','fall-crop','other-crop'],
-                [0,1,2,3,4,5]
-                )
-            
-            Y = training_df['class_id'].values
-            X = training_df.iloc[:,3:8].values
-
-            # print(Y[:5])
-            # print(X[:5])
-
-            #arrange into 93 fields and 28 dates
-            X_all = []
-            Y_all = []
-
-            # for i in range(0,len(X),665*64): ## 665 polygons with 8x8 (64) chip in each polygon
-            #     X_all.append(X[i:i+665*64,:])
-                
-            # X = np.concatenate((X_all),axis=1)    
-            # Y=Y[:665*64]
-
-
-            # for i in range(0,len(X),729*64): ## 729 polygons with 8x8 (64) chip in each polygon, new mask
-            #     X_all.append(X[i:i+729*64,:])
-                
-            # X = np.concatenate((X_all),axis=1)    
-            # Y=Y[:729*64]
-
-            #############
-            # for i in range(0,len(X),666*200): ## 666 polygons with 200 pixels in each polygon, new mask
-            #     X_all.append(X[i:i+666*200,:])
-                
-            # X = np.concatenate((X_all),axis=1)    
-            # Y=Y[:666*200]
-
-
-            # for i in range(0,len(X),1069*32*32): ## 1069 polygons with 32x32 pixels in each polygon, new mask
-            #     X_all.append(X[i:i+1069*32*32,:])
-                
-            # X = np.concatenate((X_all),axis=1)    
-            # Y=Y[:1069*32*32]
-
-
-            for i in range(0,len(X),708*500): ## 708 polygons with 500 pixels in each polygon, new mask
-                X_all.append(X[i:i+708*500,:])
-                
-            X = np.concatenate((X_all),axis=1)    
-            Y = Y[:708*500]
+            Y = training_df['class'].values
+            # X = training_df.iloc[:,3:8].values
+            X = training_df.iloc[:,2:27].values
 
             print(X.shape)
             print(Y.shape)
 
             # class_number=6 # other, corn, soybean, fall-crop, other-crop, water
-            class_number=4 # other, corn, soybean, water
+            # class_number=5 # other, corn, soybean, fall-crop, water
             test_size=0.2
             random_state = 42
 
@@ -216,18 +200,17 @@ def train_random_forest(training_file, khuong):
             X_test = []    
             y_test = []
 
-            class_types=['other','corn','soybean','fall-crop','other-crop','water']
-            for i in range(class_number):
+            class_types=training_df['class'].unique()
+            for i in class_types:
                 Y_class = Y[Y==i] # other=0, corn=1, soybean=2, fall-crop=3, other-crop=4, water=5
                 X_class = X[Y==i]
 
-                X_class[np.isnan(X_class)] = -10000
+                # X_class[np.isnan(X_class)] = -10000
                 
                 X_train_class, X_test_class, y_train_class, y_test_class = \
                     train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
 
-                print(class_types[i],y_train_class.shape,\
-                        X_train_class.shape)
+                print(i,y_train_class.shape,X_train_class.shape)
 
                 X_train.append(X_train_class)
                 X_test.append(X_test_class)
@@ -251,7 +234,11 @@ def train_random_forest(training_file, khuong):
         print("L_test shape: ", L_test.shape)
 
         # run training for random forest model
-        model_RF = RandomForestClassifier(n_estimators=500, criterion='entropy', class_weight='balanced', random_state=42)
+        # class_weights = [{0: 1, 1: 1}, {0: 1, 1: 5}, {0: 1, 1: 1}, {0: 1, 1: 1}, {0: 1, 1: 5}]
+        class_weights = {0:1, 1:5, 2:1, 3:1, 4:5, 5:1}
+
+        model_RF = RandomForestClassifier(n_estimators=100, criterion='entropy', class_weight=class_weights, random_state=42, n_jobs=4)
+        # model_RF = RandomForestClassifier()
         model_RF.fit(X_train,L_train)
         L_pred_train = model_RF.predict(X_train)
         print('Model Training accuracy: % .3f' % accuracy_score(L_train, L_pred_train))
@@ -293,7 +280,7 @@ def train_random_forest(training_file, khuong):
 
     return model_RF
 
-def prepare_ts(ts_file, im_size):
+def prepare_ts(ts_file, im_size, scale=False):
 
     big_df = pl.read_csv(ts_file, has_header=True)
     X_im = big_df.select(['blue','green','red','nir','ndvi'])
@@ -302,7 +289,7 @@ def prepare_ts(ts_file, im_size):
     # X_im = pd.read_csv(ts_file, header=0)
     # X_im = X_im[['blue','green','red','nir','nvdi']]
 
-    X_im = X_im.replace(0, -10000)
+    # X_im = X_im.replace(0, -10000)
     X_array = X_im.to_numpy()
     print("X_array shape: ", X_array.shape)
 
@@ -311,7 +298,7 @@ def prepare_ts(ts_file, im_size):
         X_lst.append(X_array[i:i+(im_size*im_size),:])
         
     X_out = np.concatenate((X_lst),axis=1)
-    X_out[np.isnan(X_out)] = -10000
+    # X_out[np.isnan(X_out)] = -10000
     print("X_out shape: ", X_out.shape)
 
     return X_out
@@ -330,31 +317,32 @@ def predict_image(model_RF, X_array, start_hidx: int, start_widx: int, im_size: 
     im_pred = model_RF.predict(X_array)
     im_out = im_pred.reshape((im_size,im_size))
 
-    colors = ['orange', 'green']
-    colormap = pltc.ListedColormap(colors)
+    # colors = ['orange', 'green']
+    # colormap = pltc.ListedColormap(colors)
 
-    plt.figure(figsize=(20,20))
-    plt.subplot(1,2,1)
-    plt.imshow(rescale_truncate(\
-        rescale_image(planet_data[start_hidx:(start_hidx+im_size),start_widx:(start_widx+im_size),:3])))
-    plt.subplot(1,2,2)
-    plt.imshow(im_out, cmap=colormap)
-    plt.savefig(f'./output/random_forest_prediction-tile02-{im_size}-{start_hidx}-{start_widx}.png')
-    # plt.show()
-    plt.close()
+    # plt.figure(figsize=(20,20))
+    # plt.subplot(1,2,1)
+    # plt.imshow(rescale_truncate(\
+    #     rescale_image(planet_data[start_hidx:(start_hidx+im_size),start_widx:(start_widx+im_size),:3])))
+    # plt.subplot(1,2,2)
+    # plt.imshow(im_out, cmap=colormap)
+    # plt.savefig(f'./output/random_forest_prediction-tile01-{im_size}-{start_hidx}-{start_widx}.png')
+    # # plt.show()
+    # plt.close()
 
-
-    del planet_data
+    # del planet_data
 
     return im_out
 
 
 if __name__ =='__main__':
 
-    files_lst = sorted(glob.glob('output/csv/*.csv'))
+    
     # ts_file = 'output/csv/dpc-unet-pixel-all-2000-2000_2000.csv'
 
     khuong = False
+
+    print("Start the python scripts!")
 
     if khuong:
         training_file = 'dpc-unet-pixel_rearrranged_kt.csv' ## khuong;s file
@@ -363,24 +351,33 @@ if __name__ =='__main__':
         # training_file = 'dpc-unet-pixel-label-label-0529.csv'
         # training_file = 'dpc-unet-pixel-label-200perPoly-label-0703.pkl'
         # training_file = 'dpc-unet-pixel-tile01-label-32x32-label-0802.csv'
-        training_file = 'dpc-unet-pixel-tile01-label-500p-label-0803.csv'
+        training_file_t2 = '/home/geoint/tri/Planet_khuong/output/csv/training-pixel-GM-tile02-label-2000p-label-0817.csv'
+
+        training_file_t1 = '/home/geoint/tri/Planet_khuong/output/csv/training-pixel-GM-tile01-label-2000p-label-0817.csv'
 
     # with open(training_file, 'rb') as file:
     #     df = pickle.load(file)
 
-    df = pl.read_csv(training_file)
-
-    print(df.shape)
-
-    # print(df.head(20))
+    # df = pl.read_csv(training_file)
+    # print(df.shape)
+    # print(df.head(5))
 
     # search_term = re.search(r'all.(.*\d*).csv', ts_file).group(1)
     # search_widx = re.search(r'\d_(\d*)', search_term).group(1)
     # search_hidx = re.search(r'\d-(\d*)', search_term).group(1)
 
     im_size=2000
-    model = train_random_forest(training_file, khuong)
+    tile="tile02"
+    scale=False
+    if khuong:
+        model=train_random_forest([training_file], khuong, scale = scale)
+    else:
+        model=train_random_forest([training_file_t1,training_file_t2], khuong, scale = scale)
     
+    if tile == "tile01":
+        files_lst = sorted(glob.glob('output/csv/tile01/*.csv'))
+    elif tile=="tile02":
+        files_lst = sorted(glob.glob('output/csv/tile02/*.csv'))
 
     # X_array = prepare_ts(ts_file, im_size=im_size)
     # predict_image(model, X_array,start_hidx=int(search_hidx), start_widx=int(search_widx), im_size=im_size)
@@ -391,8 +388,8 @@ if __name__ =='__main__':
         search_hidx = re.search(r'\d-(\d*)', search_term).group(1)
 
         print(ts_file)
-        X_array = prepare_ts(ts_file, im_size=im_size)
+        X_array = prepare_ts(ts_file, im_size=im_size, scale=scale)
         output = predict_image(model, X_array,start_hidx=int(search_hidx), \
                                start_widx=int(search_widx), im_size=im_size)
         
-        np.save(f'output/rf_out/rf-{search_hidx}_{search_widx}.npy', output)
+        np.save(f'output/rf_out/{tile}/rf-{tile}-{search_hidx}_{search_widx}.npy', output)

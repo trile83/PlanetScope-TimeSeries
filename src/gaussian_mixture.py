@@ -13,6 +13,7 @@ import re
 from sklearn.decomposition import PCA
 import glob
 import json
+from sklearn.mixture import GaussianMixture
 # from tslearn.clustering import TimeSeriesKMeans
 
 def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
@@ -156,7 +157,7 @@ def read_data(fl_path):
 
     # fl_path = f'/median_composite/{tile}/'
 
-    name = re.search(r'/median_composite/tile02/(.*?).tiff', fl_path).group(1)
+    name = re.search(r'/median_composite/tile01/(.*?).tiff', fl_path).group(1)
     planet_data = np.squeeze(rxr.open_rasterio(fl_path, masked=True).values)
     ref_im = rxr.open_rasterio(fl_path)
 
@@ -202,7 +203,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
 
         # Save COG file to disk
         prediction.rio.to_raster(
-            f'output/{name}_5month678910-kmeans-ts-{n_clusters}-0815.tiff',
+            f'output/{name}_5month678910-gaussian-mixture-indices-{n_clusters}-0829.tiff',
             BIGTIFF="IF_SAFER",
             compress='LZW',
             # num_threads='all_cpus',
@@ -304,11 +305,53 @@ def run_pca(data, components: int):
 
     return converted_data
 
+def cal_ndvi(image):
+    
+    np.seterr(divide='ignore', invalid='ignore')
+    ndvi = np.divide((image[:,:,3]-image[:,:,2]), (image[:,:,3]+image[:,:,2]))
+    return ndvi
+
+def cal_ndwi(image):
+    
+    np.seterr(divide='ignore', invalid='ignore')
+    ndwi = np.divide((image[:,:,1]-image[:,:,3]), (image[:,:,1]+image[:,:,3]))
+    return ndwi
+
+def cal_osavi(image):
+    
+    np.seterr(divide='ignore', invalid='ignore')
+    osavi = np.divide(((1+0.16)*(image[:,:,3]-image[:,:,2])), (image[:,:,3]+image[:,:,2]+0.16))
+    return osavi
+
+def add_indices(data):
+
+    out_array = np.zeros((data.shape[0], data.shape[1], 7))
+    ndvi = cal_ndvi(data)
+    ndwi = cal_ndwi(data)
+    osavi = cal_osavi(data)
+
+    out_array[:,:,0] = data[:,:,0]
+    out_array[:,:,1] = data[:,:,1]
+    out_array[:,:,2] = data[:,:,2]
+    out_array[:,:,3] = data[:,:,3]
+    out_array[:,:,4] = ndvi
+    out_array[:,:,5] = ndwi
+    out_array[:,:,6] = osavi
+
+    print(out_array.shape)
+
+    del data
+
+    # print(out_array[:,:,4])
+    # print(out_array[:,:,5])
+
+    return out_array
+
 
 
 def run():
     #Loading original image
-    tile = "tile02"
+    tile = "tile01"
 
     if tile == "tile02":
         pl_file_09 = \
@@ -342,20 +385,6 @@ def run():
         pl_file_10 = \
             '/home/geoint/tri/Planet_khuong/output/median_composite/tile01/tile01-10_median_composit-2.tiff'
         
-    
-    
-    # field_file = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
-
-    # name = pl_file[-43:-4]
-    # planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
-    # ref_im = rxr.open_rasterio(pl_file)
-
-    # if planet_data.ndim > 2:
-    #     planet_data = np.transpose(planet_data, (1,2,0))
-
-
-    # ts_name = "tile01"
-    # ts_arr = read_dataset(tile_name=ts_name)
 
     ### stacked only 3 images
     ref_im = rxr.open_rasterio(pl_file_07)
@@ -365,6 +394,12 @@ def run():
     data_08, name_08 = read_data(pl_file_08)
     data_09, name_09 = read_data(pl_file_09)
     data_10, name_10 = read_data(pl_file_10)
+
+    data_06 = add_indices(data_06)
+    data_07 = add_indices(data_07)
+    data_08 = add_indices(data_08)
+    data_09 = add_indices(data_09)
+    data_10 = add_indices(data_10)
 
     # data_07 = np.nan_to_num(data_07, nan=-10000)
     # data_08 = np.nan_to_num(data_08, nan=-10000)
@@ -412,13 +447,8 @@ def run():
     # Converting image into array of dimension [nb of pixels in originImage, 3]
     # based on r g b intensities
     flatImg = originImg.reshape((originImg.shape[0] * originImg.shape[1], originImg.shape[2] * originImg.shape[3]))
-    
-    ## flatten different way
-    flatImg = originImg.reshape((originImg.shape[0] * originImg.shape[1] * originImg.shape[2], originImg.shape[3]))
 
     full_flat = full_img.reshape((full_img.shape[0] * full_img.shape[1], full_img.shape[2] * full_img.shape[3]))
-
-    full_flat = full_flat.reshape((full_img.shape[0] * full_img.shape[1] * full_img.shape[2], full_img.shape[3]))
     # full_flat = np.nan_to_num(full_flat, nan=-10000)
 
     # print('flat img: ', flatImg.shape)
@@ -431,7 +461,6 @@ def run():
     del data_08
     del data_09
     del data_10
-
 
     pca = False
 
@@ -454,51 +483,49 @@ def run():
 
     # save kmeans model
     model_dir = 'output/kmeans_model/'
-    n_clusters = 6
+    n_clusters = 5
 
     # Open a file and use dump()
-    filename = f'{model_dir}kmeans-ts-5month678910-{n_clusters}-{tile}-southdakota-0815.pkl'
+    filename = f'{model_dir}gaussian-mixture-5month678910-indices-{n_clusters}-{tile}-southdakota-0829.pkl'
+    # filename = f'{model_dir}gaussian-mixture-5month678910-{n_clusters}-tile02-southdakota-0817.pkl'
     if os.path.isfile(filename):
         tic = time.time()
         print("Load model from file.")
         with open(filename, 'rb') as file:
-            k_means = pickle.load(file)
+            gm = pickle.load(file)
     else:
         tic = time.time()  
-        # Run Kmeans clustering
-        print("Run KMeans from data.")
-        
-        k_means = KMeans(n_clusters=n_clusters)
+        # Run Gaussian Mixture clustering
+        print("Run Gaussian Mixture from data.")
 
-        # tskmeans = TimeSeriesKMeans(n_clusters=n_clusters, metric="dtw", max_iter=10, random_state=42)
-        
+        gm = GaussianMixture(n_components=n_clusters, random_state=0)
+    
         if pca:
-            k_means.fit(pca_flat)
+            gm.fit(pca_flat)
         else:
-            k_means.fit(flatImg)
+            gm.fit(flatImg)
             # tskmeans.fit(flatImg)
 
         with open(filename, 'wb') as file:
-            pickle.dump(k_means, file)
-            # pickle.dump(tskmeans, file)
+            pickle.dump(gm, file)
 
     print(f'time to run kmeans: {time.time()-tic} seconds')
 
     # Predict data
 
     if pca:
-        prediction = k_means.predict(pca_flat)
+        prediction = gm.predict(pca_flat)
     else:
-        prediction = k_means.predict(full_flat)
+        prediction = gm.predict(full_flat)
         # prediction = tskmeans.predict(full_flat)
 
     print("prediction shape: ", prediction.shape)
     X_cluster = prediction
-    X_cluster = X_cluster.reshape((8000,8000,5))
+    X_cluster = X_cluster.reshape((8000,8000))
 
     print('X_cluster shape: ', X_cluster.shape)
 
-    X_cluster = np.argmax(X_cluster, axis=2)
+    # X_cluster = np.argmax(X_cluster, axis=2)
     
 
     # save raster

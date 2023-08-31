@@ -75,7 +75,7 @@ def save_tiff(prediction, model_option, tile='tile01'):
 
     # prediction = prediction.where(xraster != -9999)
 
-    prediction.attrs['long_name'] = ('otcb')
+    prediction.attrs['long_name'] = ('predict')
     prediction.attrs['model_name'] = (model_option)
     prediction = prediction.transpose("band", "y", "x")
 
@@ -90,7 +90,7 @@ def save_tiff(prediction, model_option, tile='tile01'):
 
     # Save COG file to disk
     prediction.rio.to_raster(
-        f'{data_dir}tile02-{model_option}-0804.tiff',
+        f'{data_dir}{tile}-{model_option}-0818-both.tiff',
         BIGTIFF="IF_SAFER",
         compress='LZW',
         # num_threads='all_cpus',
@@ -104,11 +104,18 @@ if __name__ == '__main__':
 
     array_dir = 'output/rf_out/'
     model_option = 'rf'
+    tile="tile02"
 
     if model_option == 'rf':
-        array_fls = sorted(glob.glob('output/rf_out/*.npy'))
+        if tile == "tile01":
+            array_fls = sorted(glob.glob('output/rf_out/tile01/*.npy'))
+        elif tile == "tile02":
+            array_fls = sorted(glob.glob('output/rf_out/tile02/*.npy'))
     elif model_option == 'lstm':
-        array_fls = sorted(glob.glob('output/rf_out/lstm/*.npy'))
+        if tile == "tile01":
+            array_fls = sorted(glob.glob('output/lstm/tile01/*.npy'))
+        elif tile == "tile02":
+            array_fls = sorted(glob.glob('output/lstm/tile02/*.npy'))
 
     edge_fl = 'output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-red.tiff'
     edge_nir_fl = 'output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-nir.tiff'
@@ -158,24 +165,22 @@ if __name__ == '__main__':
 
     # output[output>3] = 4
 
-    tile = 'tile02'
-
     image = save_tiff(output, model_option, tile)
 
     image = np.transpose(image, (1,2,0))
 
-    # colors = ['brown','yellow', 'green', 'pink','lightgreen', 'blue','white']
-    colors = ['lightgreen','yellow', 'green', 'blue','white']
-    colormap = pltc.ListedColormap(colors)
+    # # colors = ['brown','yellow', 'green', 'pink','lightgreen', 'blue','white']
+    # colors = ['lightgreen','yellow', 'green', 'blue','white']
+    # colormap = pltc.ListedColormap(colors)
 
-    ## plot prediction
-    plt.figure(figsize=(20,20))
-    plt.subplot(1,2,1)
-    plt.axis('off')
-    plt.imshow(rescale_truncate(rescale_image(image[:,:,:3])))
-    plt.subplot(1,2,2)
-    plt.axis('off')
-    plt.imshow(output, colormap)
-    # plt.show()
-    plt.savefig(f'output/rf_out/{model_option}-tile02-prediction-0804-1.png', dpi=300, bbox_inches='tight')
-    plt.close()
+    # ## plot prediction
+    # plt.figure(figsize=(20,20))
+    # plt.subplot(1,2,1)
+    # plt.axis('off')
+    # plt.imshow(rescale_truncate(rescale_image(image[:,:,:3])))
+    # plt.subplot(1,2,2)
+    # plt.axis('off')
+    # plt.imshow(output, colormap)
+    # # plt.show()
+    # plt.savefig(f'output/rf_out/{model_option}-tile02-prediction-0804-1.png', dpi=300, bbox_inches='tight')
+    # plt.close()

@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -31,70 +31,48 @@ def create_loaders(train_ds, valid_ds, bs=512, jobs=0):
     return train_dl, valid_dl
 
 
-def prepare_data(training_file):
+def prepare_data(training_file, scale=False):
 
     # with open(training_file, 'rb') as file:
     #     training_df = pickle.load(file)
 
-    big_df = pl.read_csv(training_file, has_header=True)
-    # X_im = big_df.select(['blue','green','red','nir','nvdi','class'])
-    # X_im = X_im.to_pandas()
+    # big_df = pl.read_csv(training_file, has_header=True)
+    # # X_im = big_df.select(['blue','green','red','nir','nvdi','class'])
+    # # X_im = X_im.to_pandas()
 
-    X_im = big_df
+    # X_im = big_df
 
-    print(X_im.shape)
-    print(X_im.head(20))
+    # print(X_im.shape)
+    # print(X_im.head(5))
 
-    training_df = X_im
-    del X_im
+    # training_df = X_im
+    # del X_im
 
-    print(training_df['class'].unique())
-    crop = training_df['class']
+    # print(training_df['class'].unique())
+    # # crop = training_df['class']
 
-    training_df = training_df.to_pandas()
-    training_df['class_id'] = training_df['class']
-    training_df['class_id'] = training_df['class_id'].replace(
-        ['other','corn','soybean','water','fall-crop','other-crop'],
-        [0,1,2,3,4,5]
-        )
-    Y = training_df['class_id'].values
-    X = training_df.iloc[:,3:8].values
+    # training_df = training_df.to_pandas()
+
+    training_df_1 = pd.read_csv(training_file[0])
+    training_df_2 = pd.read_csv(training_file[1])
+
+    training_df_2 = training_df_2.replace(2,5)
+    training_df_2 = training_df_2.replace(1,2)
+    training_df_2 = training_df_2.replace(0,1)
+    
+    print(training_df_1['class'].unique())
+    print(training_df_2['class'].unique())
+
+    frames = [training_df_1, training_df_2]
+
+    training_df = pd.concat(frames)
+
+    Y = training_df['class'].values
+    # X = training_df.iloc[:,3:8].values
+    X = training_df.iloc[:,2:27].values
 
     # print(Y[:5])
     # print(X[:5])
-
-    X_all = []
-    Y_all = []
-    # for i in range(0,len(X),665*64): ## 665 polygons with 8x8 (64) chip in each polygon
-    #     X_all.append(X[i:i+665*64,:])
-        
-    # X = np.concatenate((X_all),axis=1)    
-    # Y=Y[:665*64]
-
-
-    # for i in range(0,len(X),729*64): ## 729 polygons with 8x8 (64) chip in each polygon, new mask
-    #     X_all.append(X[i:i+729*64,:])
-        
-    # X = np.concatenate((X_all),axis=1)    
-    # Y=Y[:729*64]
-
-    # for i in range(0,len(X),666*200): ## 666 polygons with 200 pixels in each polygon, new mask
-    #     X_all.append(X[i:i+666*200,:])
-        
-    # X = np.concatenate((X_all),axis=1)    
-    # Y=Y[:666*200]
-
-    # for i in range(0,len(X),1069*32*32): ## 1069 polygons with 32x32 pixels in each polygon, new mask
-    #     X_all.append(X[i:i+1069*32*32,:])
-        
-    # X = np.concatenate((X_all),axis=1)    
-    # Y=Y[:1069*32*32]
-
-    for i in range(0,len(X),708*500): ## 708 polygons with 500 pixels in each polygon, new mask
-        X_all.append(X[i:i+708*500,:])
-                
-    X = np.concatenate((X_all),axis=1)    
-    Y=Y[:708*500]
 
     print('X shape: ',X.shape)
     print('Y shape: ',Y.shape)
@@ -114,7 +92,7 @@ def prepare_data(training_file):
 
     X = X_out
 
-    class_number=4 # other-crop, corn, soybean, fall-crop, water
+    class_number=5 # other-crop, corn, soybean, fall-crop, water
     test_size=0.2
     random_state = 42
 
@@ -124,18 +102,17 @@ def prepare_data(training_file):
     y_test = []
 
     # class_types=['other-crop','corn','soybean','fall-crop','water']
-    class_types=['other','corn','soybean','water','fall-crop','other-crop']
-    for i in range(class_number):
+    # class_types=['other','corn','soybean','water','fall-crop','other-crop']
+    for i in training_df['class'].unique():
         Y_class = Y[Y==i] # other-crop=0, corn=1, soybean=2, fall-crop=3, water=4
         X_class = X[Y==i]
 
-        X_class[np.isnan(X_class)] = -10000
+        # X_class[np.isnan(X_class)] = -10000
         
         X_train_class, X_test_class, y_train_class, y_test_class = \
             train_test_split(X_class, Y_class, test_size=test_size, random_state=random_state)
 
-        print(class_types[i],y_train_class.shape,\
-                X_train_class.shape)
+        print(i,y_train_class.shape,X_train_class.shape)
 
     
         X_train.append(X_train_class)
@@ -170,15 +147,15 @@ def prepare_data(training_file):
 def train(training_file):
 
 
-    train_ds, test_ds = prepare_data(training_file)
+    train_ds, test_ds = prepare_data(training_file, scale=True)
 
     bs = 128
     print(f'Creating data loaders with batch size: {bs}')
     trn_dl, val_dl = create_loaders(train_ds, test_ds, bs, jobs=4)
 
-    input_dim = 5    
+    input_dim = 5
     hidden_dim = 256
-    layer_dim = 3
+    layer_dim = 4
     output_dim = 6
     seq_dim = 128
 
@@ -227,7 +204,7 @@ def train(training_file):
         if acc > best_acc:
             trials = 0
             best_acc = acc
-            torch.save(model.state_dict(), 'output/checkpoints/lstm-best-0804.pth')
+            torch.save(model.state_dict(), 'output/checkpoints/lstm-best-0815.pth')
             print(f'Epoch {epoch} best model saved with loss: {loss}')
             print(f'Epoch {epoch} best model saved with accuracy: {best_acc:2.2%}')
         else:
@@ -240,5 +217,7 @@ def train(training_file):
 if __name__ == '__main__':
 
     # training_file = 'dpc-unet-pixel-label-200perPoly-label-0703.pkl'
-    training_file = 'dpc-unet-pixel-tile01-label-500p-label-0803.csv'
-    train(training_file)
+    training_file_t2 = '/home/geoint/tri/Planet_khuong/output/csv/training-pixel-tile02-label-tile02-2000p-label-0812-2.csv'
+
+    training_file_t1 = '/home/geoint/tri/Planet_khuong/output/csv/training-pixel-tile01-label-2000p-label-0815.csv'
+    train([training_file_t1, training_file_t2])

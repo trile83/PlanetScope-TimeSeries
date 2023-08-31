@@ -258,9 +258,9 @@ if __name__ == '__main__':
     
     # pl_file = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
 
-    pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile02/tile02-09_median_composit.tiff'
+    pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile01/tile01-09_median_composit-2.tiff'
     
-    name = re.search(r'/tile02/(.*?).tiff', pl_file).group(1)
+    name = re.search(r'/tile01/(.*?).tiff', pl_file).group(1)
 
     model_type = "vit_l"
 

@@ -8,6 +8,7 @@ from skimage import exposure
 import time
 import scipy.ndimage as nd
 import xarray as xr
+import re
 
 def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
     """
@@ -48,11 +49,14 @@ def run():
     #Loading original image
     # originImg = cv2.imread('Swimming_Pool.jpg')
 
-    pl_file = \
-            '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
-    field_file = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
+    # pl_file = \
+    #         '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+    
+    pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile01/tile01-09_median_composit-2.tiff'
+    # field_file = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
 
-    name = pl_file[-43:-4]
+    # name = pl_file[-43:-4]
+    name = re.search(r'tile01/(.*\d*).tiff', pl_file).group(1)
     print(name)
     planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
     ref_im = rxr.open_rasterio(pl_file)
@@ -119,46 +123,48 @@ def run():
             drop=True
         )
     
-    for idx, prediction in enumerate([output_red, output_nir, output_green, output_blue]):
-        if idx == 0:
-            band_name = 'red'
-        elif idx == 1:
-            band_name = 'nir'
-        elif idx == 2:
-            band_name = 'green'
-        elif idx == 3:
-            band_name = 'blue'
+    prediction = output_blue+output_green+output_red+output_nir
+    
+    # for idx, prediction in enumerate([output_red, output_nir, output_green, output_blue]):
+    #     if idx == 0:
+    #         band_name = 'red'
+    #     elif idx == 1:
+    #         band_name = 'nir'
+    #     elif idx == 2:
+    #         band_name = 'green'
+    #     elif idx == 3:
+    #         band_name = 'blue'
 
-        prediction = xr.DataArray(
-                    np.expand_dims(prediction, axis=-1),
-                    name='edge-detect',
-                    coords=ref_im.coords,
-                    dims=ref_im.dims,
-                    attrs=ref_im.attrs
-                )
+    prediction = xr.DataArray(
+                np.expand_dims(prediction, axis=-1),
+                name='edge-detect',
+                coords=ref_im.coords,
+                dims=ref_im.dims,
+                attrs=ref_im.attrs
+            )
 
-        # prediction = prediction.where(xraster != -9999)
+    # prediction = prediction.where(xraster != -9999)
 
-        prediction.attrs['long_name'] = ('edge-detect')
-        prediction = prediction.transpose("band", "y", "x")
+    prediction.attrs['long_name'] = ('edge-detect')
+    prediction = prediction.transpose("band", "y", "x")
 
-        # Set nodata values on mask
-        nodata = prediction.rio.nodata
-        prediction = prediction.where(ref_im != nodata)
-        prediction.rio.write_nodata(
-            255, encoded=True, inplace=True)
+    # Set nodata values on mask
+    # nodata = prediction.rio.nodata
+    # prediction = prediction.where(ref_im != nodata)
+    # prediction.rio.write_nodata(
+    #     255, encoded=True, inplace=True)
 
-        # TODO: ADD CLOUDMASKING STEP HERE
-        # REMOVE CLOUDS USING THE CURRENT MASK
+    # TODO: ADD CLOUDMASKING STEP HERE
+    # REMOVE CLOUDS USING THE CURRENT MASK
 
-        # Save COG file to disk
-        prediction.rio.to_raster(
-            f'output/{name}-edge-detection-{band_name}.tiff',
-            BIGTIFF="IF_SAFER",
-            compress='LZW',
-            # num_threads='all_cpus',
-            driver='GTiff'
-        )
+    # Save COG file to disk
+    prediction.rio.to_raster(
+        f'output/{name}-edge-detection-0815.tiff',
+        BIGTIFF="IF_SAFER",
+        compress='LZW',
+        # num_threads='all_cpus',
+        driver='GTiff'
+    )
 
 
     plt.figure(figsize=(20,20))

@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -33,14 +33,17 @@ def create_loaders(train_ds, bs=512, jobs=4):
     return train_dl
 
 
-def prepare_data(ts_file, im_size=2000):
+def prepare_data(ts_file, im_size=2000, scale=False):
 
     big_im = ts_file
     big_df = pl.read_csv(big_im)
-    X_im = big_df.select(['blue','green','red','nir','nvdi'])
+    X_im = big_df.select(['blue','green','red','nir','ndvi'])
     X_im = X_im.to_pandas()
     # X_im = X_im.replace(0, -10000)
 
+    if scale:
+        scaler = StandardScaler()
+        X_im[['blue','green','red','nir']] = scaler.fit_transform(X_im[['blue','green','red','nir']])
 
     X_array = X_im.to_numpy()
     print("X_array shape: ", X_array.shape)
@@ -50,7 +53,7 @@ def prepare_data(ts_file, im_size=2000):
         X_lst.append(X_array[i:i+(im_size*im_size),:])
         
     X = np.concatenate((X_lst),axis=1)
-    X[np.isnan(X)] = -10000
+    # X[np.isnan(X)] = -10000
 
     print("X shape: ", X.shape)
 
@@ -72,7 +75,7 @@ def prepare_data(ts_file, im_size=2000):
 def predict(ts_file):
 
 
-    X = prepare_data(ts_file)
+    X = prepare_data(ts_file, scale=True)
 
     bs = 256
     trn_dl = create_loaders(X, bs, jobs=4)
@@ -80,15 +83,15 @@ def predict(ts_file):
 
     input_dim = 5    
     hidden_dim = 256
-    layer_dim = 3
-    output_dim = 6 # previously 5
+    layer_dim = 4
+    output_dim = 5 # previously 5
 
     output_lst = []
 
     model = LSTMClassifier(input_dim, hidden_dim, layer_dim, output_dim)
     model = model.cuda()
 
-    checkpoint = 'output/checkpoints/lstm-best-0803.pth'
+    checkpoint = 'output/checkpoints/lstm-best-0815.pth'
     model.load_state_dict(torch.load(checkpoint))
 
     for i, x in enumerate(trn_dl):
@@ -110,11 +113,15 @@ def predict(ts_file):
     
 if __name__ == '__main__':
 
-    files_lst = sorted(glob.glob('output/csv/*.csv'))
+    tile="tile01"
+    if tile=="tile01":
+        files_lst = sorted(glob.glob('output/csv/tile01/*.csv'))
+    elif tile=="tile02":
+        files_lst = sorted(glob.glob('output/csv/tile02/*.csv'))
     for ts_file in files_lst:
         search_term = re.search(r'all.(.*\d*).csv', ts_file).group(1)
         search_widx = re.search(r'\d_(\d*)', search_term).group(1)
         search_hidx = re.search(r'\d-(\d*)', search_term).group(1)
         output = predict(ts_file)
         
-        np.save(f'output/rf_out/lstm-{search_hidx}_{search_widx}.npy', output)
+        np.save(f'output/lstm/{tile}/lstm-{tile}-{search_hidx}_{search_widx}.npy', output)
