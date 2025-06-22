@@ -13,7 +13,7 @@ import re
 from sklearn.decomposition import PCA
 import glob
 import json
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 # from tslearn.clustering import TimeSeriesKMeans
 
 def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
@@ -153,22 +153,25 @@ def read_dataset(tile_name='tile01'):
 
     return out_ts
 
-def read_data(fl_path):
+def read_data(fl_path, tile='tile01'):
 
     # fl_path = f'/median_composite/{tile}/'
 
-    name = re.search(r'/median_composite/tile01/(.*?).tiff', fl_path).group(1)
+    name = re.search(f'/{tile}/(.*?).tiff', fl_path).group(1)
     planet_data = np.squeeze(rxr.open_rasterio(fl_path, masked=True).values)
-    ref_im = rxr.open_rasterio(fl_path)
+    #ref_im = rxr.open_rasterio(fl_path)
 
     if planet_data.ndim > 2:
         planet_data = np.transpose(planet_data, (1,2,0))
 
+
+    planet_data = planet_data[:,:,:4]
+
     return planet_data, name
 
-def save_raster(ref_im, prediction, name, n_clusters, mask=True):
+def save_raster(ref_im, prediction, name, n_clusters, mask=True, proba=False):
 
-
+    ## save prediction output mask
     if mask:
         ref_im = ref_im.transpose("y", "x", "band")
 
@@ -181,7 +184,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
         
         prediction = xr.DataArray(
                     np.expand_dims(prediction, axis=-1),
-                    name='kmeans',
+                    name='gmm',
                     coords=ref_im.coords,
                     dims=ref_im.dims,
                     attrs=ref_im.attrs
@@ -189,7 +192,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
 
         # prediction = prediction.where(xraster != -9999)
 
-        prediction.attrs['long_name'] = ('kmeans')
+        prediction.attrs['long_name'] = ('gmm')
         prediction = prediction.transpose("band", "y", "x")
 
         # Set nodata values on mask
@@ -203,7 +206,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
 
         # Save COG file to disk
         prediction.rio.to_raster(
-            f'output/{name}_5month678910-gaussian-mixture-indices-{n_clusters}-0829.tiff',
+            f'output/{name}_5month678910-gaussian-mixture-indices-{n_clusters}.tiff',
             BIGTIFF="IF_SAFER",
             compress='LZW',
             # num_threads='all_cpus',
@@ -211,6 +214,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
             dtype='uint8'
         )
 
+    ## save PCA output mask
     else:
         ref_im = ref_im.transpose("y", "x", "band")
 
@@ -252,6 +256,54 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
             driver='GTiff',
             dtype='uint8'
         )
+
+def save_raster_proba(ref_im, prediction, name, n_clusters):
+
+    ref_im = ref_im.transpose("y", "x", "band")
+
+    # ref_im = ref_im.drop(
+    #         dim="band",
+    #         labels=ref_im.coords["band"].values[1:],
+    #         drop=True
+    #     )
+
+    # print(ref_im['band'].values)
+    # print(ref_im)
+    # print(ref_im['spatial_ref'])
+    
+    prediction = xr.DataArray(
+                prediction,
+                name='probability',
+                coords={"x": ref_im["x"], "y": ref_im["y"], 'band':np.arange(1,n_clusters), "spatial_ref":ref_im["spatial_ref"]},
+                dims=ref_im.dims,
+                attrs=ref_im.attrs
+            )
+
+    # prediction = prediction.where(xraster != -9999)
+
+    # print(prediction)
+
+    prediction.attrs['long_name'] = ('probability')
+    prediction = prediction.transpose("band", "y", "x")
+
+    # Set nodata values on mask
+    # nodata = prediction.rio.nodata
+    # prediction = prediction.where(ref_im != nodata)
+    # prediction.rio.write_nodata(
+    #     255, encoded=True, inplace=True)
+
+    # TODO: ADD CLOUDMASKING STEP HERE
+    # REMOVE CLOUDS USING THE CURRENT MASK
+
+    # Save COG file to disk
+    prediction.rio.to_raster(
+        f'/home/geoint/tri/Planet_khuong/output/{name}_proba-5month-0808.tiff',
+        BIGTIFF="IF_SAFER",
+        compress='LZW',
+        # num_threads='all_cpus',
+        driver='GTiff',
+        dtype='float32'
+    )
 
 def save_raster_stacked(ref_im, prediction, name):
 
@@ -389,11 +441,11 @@ def run():
     ### stacked only 3 images
     ref_im = rxr.open_rasterio(pl_file_07)
 
-    data_06, name_06 = read_data(pl_file_06)
-    data_07, name_07 = read_data(pl_file_07)
-    data_08, name_08 = read_data(pl_file_08)
-    data_09, name_09 = read_data(pl_file_09)
-    data_10, name_10 = read_data(pl_file_10)
+    data_06, name_06 = read_data(pl_file_06, tile)
+    data_07, name_07 = read_data(pl_file_07, tile)
+    data_08, name_08 = read_data(pl_file_08, tile)
+    data_09, name_09 = read_data(pl_file_09, tile)
+    data_10, name_10 = read_data(pl_file_10, tile)
 
     data_06 = add_indices(data_06)
     data_07 = add_indices(data_07)
@@ -413,6 +465,9 @@ def run():
     
 
     full_img = np.stack((data_06,data_07,data_08,data_09,data_10), axis=2)
+
+    del data_06, data_08, data_09, data_10
+
     # full_img = np.stack((data_08,data_09,data_10), axis=2)
 
     # stacked_img = np.concatenate((data_06,data_07,data_08,data_09,data_10), axis=2)
@@ -437,7 +492,7 @@ def run():
     # flat09 = np.nan_to_num(flat07, nan=-10000)
 
     start_idx = 1000
-    size = 7000
+    size = 6000
     originImg = full_img[start_idx:size,start_idx:size,:,:]
 
     # Shape of original image    
@@ -456,11 +511,6 @@ def run():
 
     del originImg
     del full_img
-    del data_06
-    del data_07
-    del data_08
-    del data_09
-    del data_10
 
     pca = False
 
@@ -482,54 +532,76 @@ def run():
         flatImg = flatImg
 
     # save kmeans model
-    model_dir = 'output/kmeans_model/'
-    n_clusters = 5
+    model_dir = '/home/geoint/tri/Planet_khuong/output/kmeans_model/'
+    n_clusters = 6
 
     # Open a file and use dump()
-    filename = f'{model_dir}gaussian-mixture-5month678910-indices-{n_clusters}-{tile}-southdakota-0829.pkl'
-    # filename = f'{model_dir}gaussian-mixture-5month678910-{n_clusters}-tile02-southdakota-0817.pkl'
+    # filename = f'{model_dir}bayes-gaussian-mixture-ts-indices-{n_clusters}-{tile}-southdakota.pkl'
+    filename = f'{model_dir}gaussian-mixture-ts-indices-{n_clusters}-{tile}-southdakota.pkl'
+    print(filename)
     if os.path.isfile(filename):
         tic = time.time()
         print("Load model from file.")
         with open(filename, 'rb') as file:
             gm = pickle.load(file)
     else:
+        print("No pre-trained model!")
         tic = time.time()  
         # Run Gaussian Mixture clustering
         print("Run Gaussian Mixture from data.")
 
-        gm = GaussianMixture(n_components=n_clusters, random_state=0)
+        gm = GaussianMixture(n_components=n_clusters, random_state=42)
+        # gm = BayesianGaussianMixture(n_components=n_clusters, random_state=42)
     
         if pca:
             gm.fit(pca_flat)
+            
         else:
             gm.fit(flatImg)
+            
             # tskmeans.fit(flatImg)
 
         with open(filename, 'wb') as file:
             pickle.dump(gm, file)
 
-    print(f'time to run kmeans: {time.time()-tic} seconds')
+    print(f'time to run model: {time.time()-tic} seconds')
 
     # Predict data
 
     if pca:
         prediction = gm.predict(pca_flat)
+        del pca_flat
     else:
         prediction = gm.predict(full_flat)
+        proba = gm.predict_proba(full_flat)
+        del flatImg
         # prediction = tskmeans.predict(full_flat)
 
     print("prediction shape: ", prediction.shape)
     X_cluster = prediction
+    del prediction
+    del gm
     X_cluster = X_cluster.reshape((8000,8000))
 
     print('X_cluster shape: ', X_cluster.shape)
 
     # X_cluster = np.argmax(X_cluster, axis=2)
+
+    X_proba = proba
+    del proba
+
+    X_proba = X_proba.reshape((8000,8000,n_clusters))
+
+    print('max proba: ', np.max(proba))
+    print('min proba: ', np.min(proba))
+
+
+    save_raster_proba(ref_im, X_proba, name_07, n_cluster)
+
     
 
     # save raster
-    save_raster(ref_im, X_cluster, name_07, n_clusters)
+    # save_raster(ref_im, X_cluster, name_07, n_clusters, mask=True)
 
     # plt.figure(figsize=(20,20))
     # plt.subplot(1,2,1)

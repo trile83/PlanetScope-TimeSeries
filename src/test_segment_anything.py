@@ -13,10 +13,10 @@ OR download the repo locally and install
 and:  pip install -e .
 
 Download the default trained model: 
-    https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+        https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 
 Other models are available:
-    https://github.com/facebookresearch/segment-anything#model-checkpoints
+        https://github.com/facebookresearch/segment-anything#model-checkpoints
 
 """
 # Tested on python 3.9.16
@@ -46,316 +46,248 @@ sys.path.append("..")
 from samgeo import SamGeo, tms_to_geotiff
 
 def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
-    """
-    Rescale image [0, 1] per-image or per-channel.
-    Args:
-        image (np.ndarray): array to rescale
-        rescale_type (str): rescaling strategy
-    Returns:
-        rescaled np.ndarray
-    """
-    image = image.astype(np.float32)
-    if rescale_type == 'per-image':
-        image = (image - np.min(image)) / (np.max(image) - np.min(image))
-    elif rescale_type == 'per-channel':
-        for i in range(image.shape[0]):
-            image[i, :, :] = (
-                image[i, :, :] - np.min(image[i, :, :])) / \
-                (np.max(image[i, :, :]) - np.min(image[i, :, :]))
-    else:
-        logging.info(f'Skipping based on invalid option: {rescale_type}')
-    return image
+        """
+        Rescale image [0, 1] per-image or per-channel.
+        Args:
+                image (np.ndarray): array to rescale
+                rescale_type (str): rescaling strategy
+        Returns:
+                rescaled np.ndarray
+        """
+        image = image.astype(np.float32)
+        if rescale_type == 'per-image':
+                image = (image - np.min(image)) / (np.max(image) - np.min(image))
+        elif rescale_type == 'per-channel':
+                for i in range(image.shape[0]):
+                        image[i, :, :] = (
+                                image[i, :, :] - np.min(image[i, :, :])) / \
+                                (np.max(image[i, :, :]) - np.min(image[i, :, :]))
+        else:
+                logging.info(f'Skipping based on invalid option: {rescale_type}')
+        return image
 
 def rescale_truncate(image):
-    if np.amin(image) < 0:
-        image = np.where(image < 0,0,image)
-    if np.amax(image) > 1:
-        image = np.where(image > 1,1,image) 
+        if np.amin(image) < 0:
+                image = np.where(image < 0,0,image)
+        if np.amax(image) > 1:
+                image = np.where(image > 1,1,image) 
 
-    map_img =  np.zeros(image.shape)
-    for band in range(3):
-        p2, p98 = np.percentile(image[:,:,band], (2, 98))
-        map_img[:,:,band] = exposure.rescale_intensity(image[:,:,band], in_range=(p2, p98))
-    return map_img
+        map_img =  np.zeros(image.shape)
+        for band in range(3):
+                p2, p98 = np.percentile(image[:,:,band], (2, 98))
+                map_img[:,:,band] = exposure.rescale_intensity(image[:,:,band], in_range=(p2, p98))
+        return map_img
 
 def show_anns(anns):
-    if len(anns) == 0:
-        return
-    sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
-    ax = plt.gca()
-    ax.set_autoscale_on(False)
-    polygons = []
-    color = []
-    for ann in sorted_anns:
-        m = ann['segmentation']
-        print(np.unique(m))
-        img = np.ones((m.shape[0], m.shape[1], 3))
-        color_mask = np.random.random((1, 3)).tolist()[0]
-        for i in range(3):
-            img[:,:,i] = color_mask[i]
-        # ax.imshow(np.dstack((img, m*0.35)))
-        ax.imshow(np.dstack((img, m*0.70)))
+        if len(anns) == 0:
+                return
+        sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
+        ax = plt.gca()
+        ax.set_autoscale_on(False)
+        polygons = []
+        color = []
+        for ann in sorted_anns:
+                m = ann['segmentation']
+                print(np.unique(m))
+                img = np.ones((m.shape[0], m.shape[1], 3))
+                color_mask = np.random.random((1, 3)).tolist()[0]
+                for i in range(3):
+                        img[:,:,i] = color_mask[i]
+                # ax.imshow(np.dstack((img, m*0.35)))
+                ax.imshow(np.dstack((img, m*0.70)))
 
 
 def save_raster(ref_im, prediction, name):
-    ref_im = ref_im.transpose("y", "x", "band")
+        ref_im = ref_im.transpose("y", "x", "band")
 
-    ref_im = ref_im.drop(
-            dim="band",
-            labels=ref_im.coords["band"].values[1:],
-            drop=True
+        ref_im = ref_im.drop(
+                        dim="band",
+                        labels=ref_im.coords["band"].values[1:],
+                        drop=True
+                )
+        
+        print(ref_im.dims)
+        print(prediction.shape)
+        
+        prediction = xr.DataArray(
+                                # prediction,
+                                np.expand_dims(prediction, axis=-1),
+                                name='edge',
+                                coords=ref_im.coords,
+                                dims=ref_im.dims,
+                                attrs=ref_im.attrs
+                        )
+
+        # prediction = prediction.where(xraster != -9999)
+
+        prediction.attrs['long_name'] = ('edge')
+        prediction = prediction.transpose("band", "y", "x")
+
+        # Set nodata values on mask
+        nodata = prediction.rio.nodata
+        prediction = prediction.where(ref_im != nodata)
+        prediction.rio.write_nodata(
+                255, encoded=True, inplace=True)
+
+        # TODO: ADD CLOUDMASKING STEP HERE
+        # REMOVE CLOUDS USING THE CURRENT MASK
+
+        # Save COG file to disk
+        prediction.rio.to_raster(
+                f'output/{name}-0727.tiff',
+                BIGTIFF="IF_SAFER",
+                compress='LZW',
+                # num_threads='all_cpus',
+                driver='GTiff',
+                dtype='int32'
         )
-    
-    print(ref_im.dims)
-    print(prediction.shape)
-    
-    prediction = xr.DataArray(
-                # prediction,
-                np.expand_dims(prediction, axis=-1),
-                name='edge',
-                coords=ref_im.coords,
-                dims=ref_im.dims,
-                attrs=ref_im.attrs
-            )
-
-    # prediction = prediction.where(xraster != -9999)
-
-    prediction.attrs['long_name'] = ('edge')
-    prediction = prediction.transpose("band", "y", "x")
-
-    # Set nodata values on mask
-    nodata = prediction.rio.nodata
-    prediction = prediction.where(ref_im != nodata)
-    prediction.rio.write_nodata(
-        255, encoded=True, inplace=True)
-
-    # TODO: ADD CLOUDMASKING STEP HERE
-    # REMOVE CLOUDS USING THE CURRENT MASK
-
-    # Save COG file to disk
-    prediction.rio.to_raster(
-        f'output/{name}-0727.tiff',
-        BIGTIFF="IF_SAFER",
-        compress='LZW',
-        # num_threads='all_cpus',
-        driver='GTiff',
-        dtype='int32'
-    )
 
 
 
 if __name__ == '__main__':
 
+                
+        # image = cv2.imread('output/20210918.png')  #Try houses.jpg or neurons.jpg
+        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # print(image.shape)
+        # print(image.dtype)
+
+        file_type = 'senegal'
+
+        # try tiff file
+        # pl_file_1 = '/home/geoint/tri/Planet_khuong/Tile1459221_Oct2021_psorthotile_analytic_sr_udm2/PSOrthoTile/5049414_1459221_2021-10-30_2445_BGRN_SR.tif'
+
+        # pl_file_ref = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459321_2021-09-18_242d_BGRN_SR.tif'
+
+        # pl_file_ref = '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+
+        # pl_file_1 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d-0727.tiff'
+
+        name = "edge"
+
+        if file_type == 'senegal':
+                # pl_file = '/home/geoint/tri/nasa_senegal/cassemance/Tappan01_WV02_20110430_M1BS_103001000A27E100_data.tif'
+                # pl_file = '/home/geoint/tri/nasa_senegal/wCAS/Tappan26_WV02_20121207_M1BS_103001001C9A6300_data.tif'
+                # pl_file = '/home/geoint/tri/nasa_senegal/ETZ/Tappan23_WV02_20170126_M1BS_103001006391D100_data.tif'
+                # pl_file = '/home/geoint/tri/nasa_senegal/allCAS/Tappan13_WV03_20161007_M1BS_1040010022CA2400_data.tif'
+
+                # pl_file = '/home/geoint/tri/planet-data/tile02/L15-0932E-1118N-07.tif'
+
+                pl_file = '/home/geoint/tri/super-resolution/raster/T28PEV_20180510T112121_cutWV_ts16-sr.tif'
+        elif file_type == 'dakota':
+                pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile01/tile01-09_median_composit-2.tiff'
         
-    # image = cv2.imread('output/20210918.png')  #Try houses.jpg or neurons.jpg
-    # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # name = re.search(r'allCAS/(.*?).tif', pl_file).group(1)
 
-    # print(image.shape)
-    # print(image.dtype)
+        name = re.search(r'raster/(.*?).tif', pl_file).group(1)
 
-    file_type = 'dakota'
+        model_type = "vit_l"
 
-    # try tiff file
-    pl_file_1 = \
-            '/home/geoint/tri/Planet_khuong/Tile1459221_Oct2021_psorthotile_analytic_sr_udm2/PSOrthoTile/5049414_1459221_2021-10-30_2445_BGRN_SR.tif'
+        if model_type == "vit_h":
+                sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_h_4b8939.pth"
+        elif model_type == "vit_l":
+                sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_l_0b3195.pth"
+        elif model_type == "vit_b":
+                sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_b_01ec64.pth"
 
-    # pl_file_ref = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459321_2021-09-18_242d_BGRN_SR.tif'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        sam_kwargs = {
+                "points_per_side": 32,
+                "pred_iou_thresh": 0.86,
+                "stability_score_thresh": 0.92,
+                "crop_n_layers": 1,
+                "crop_n_points_downscale_factor": 2,
+                "min_mask_region_area": 200,
+        }
 
-    pl_file_ref = '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+        # sam_kwargs_1 = {
+        #         "points_per_side": 32,
+        #         "pred_iou_thresh": 0.80,
+        #         "stability_score_thresh": 0.92,
+        #         "crop_n_layers": 1,
+        #         "crop_n_points_downscale_factor": 2,
+        #         "min_mask_region_area": 100,
+        # }
 
-    pl_file_1 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d-0727.tiff'
+        sam = SamGeo(
+                checkpoint=sam_checkpoint,
+                model_type=model_type,
+                device=device,
+                erosion_kernel=(3, 3),
+                mask_multiplier=1,
+                sam_kwargs=sam_kwargs,
+        )
 
-    name = "edge"
+        
 
-    if file_type == 'senegal':
-        pl_file = '/home/geoint/tri/nasa_senegal/cassemance/Tappan01_WV02_20110430_M1BS_103001000A27E100_data.tif'
-    elif file_type == 'dakota':
-        # pl_file = '/home/geoint/tri/Planet_khuong/output/tile01-other.tif'
-        pl_file = pl_file_1
+        if file_type == 'senegal':
+                mask = f'/home/geoint/tri/Planet_khuong/output/sam/senegal/{name}-{model_type}-segment.tif'
+                # sam.generate(pl_file, mask, batch=True, foreground=True, erosion_kernel=(3, 3), mask_multiplier=255)
+                sam.generate(pl_file, mask)
 
+                shapefile = f'/home/geoint/tri/Planet_khuong/output/sam/senegal/{name}-{model_type}.shp'
+                sam.tiff_to_vector(mask, shapefile)
+        else:
+                mask = f'output/sam/{name}-{model_type}-composit-0804.tif'
+                sam.generate(pl_file, mask)
 
-    # name = pl_file[-43:-5]
-    # image = tifffile.imread(pl_file)
-
-
-    pl_file_1 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-blue.tiff'
-    pl_file_2 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-red.tiff'
-    pl_file_3 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-green.tiff'
-
-    pl_file_4 = '/home/geoint/tri/Planet_khuong/output/4912910_1459221_2021-09-18_242d_BGRN_SR-edge-detection-nir.tiff'
-
-    name = re.search(r'/output/(.*?)_BGRN', pl_file_1).group(1)
-    blue_edge = tifffile.imread(pl_file_1)
-    red_edge = tifffile.imread(pl_file_2)
-    green_edge = tifffile.imread(pl_file_3)
-
-    nir_edge = tifffile.imread(pl_file_4)
-
-    # red_edge[red_edge > 400] = 1
-    # red_edge[red_edge<= 400] = 0
-
-    # blue_edge[blue_edge > 200] = 1
-    # blue_edge[blue_edge<= 200] = 0
-
-    # green_edge[green_edge > 200] = 1
-    # green_edge[green_edge<= 200] = 0
-
-    # nir_edge[nir_edge > 0.05] = 1
-    # nir_edge[nir_edge<= 0.05] = 0
-
-    # red_edge = rescale_image(red_edge)
-    # nir_edge = rescale_image(nir_edge)
-
-    image = blue_edge+green_edge+red_edge
-
-    image[image > 1000] = 7000
-    image[image<= 1000] = 200
-
-    # image = np.stack((blue_edge, red_edge, green_edge), axis=2)
-    # image= image*10000
-
-    # # image = nir_edge+red_edge
-    # # # image = nir_edge
-    # # # image[image>=0.12]=1
-    # # # image[image<0.12]=0
-
-    # # # image = red_edge
-    # # image[image>=0.08]=1
-    # # image[image<0.08]=0
-
-    # ref_im = rxr.open_rasterio(pl_file_ref)
-
-    # save_raster(ref_im, image, name)
+                shapefile = f'output/sam/{name}-{model_type}-composit-0804.shp'
+                sam.tiff_to_vector(mask, shapefile)
 
 
-    
+        #There are several tunable parameters in automatic mask generation that control 
+        # how densely points are sampled and what the thresholds are for removing low 
+        # quality or duplicate masks. Additionally, generation can be automatically 
+        # run on crops of the image to get improved performance on smaller objects, 
+        # and post-processing can remove stray pixels and holes. 
+        # Here is an example configuration that samples more masks:
+        #https://github.com/facebookresearch/segment-anything/blob/9e1eb9fdbc4bca4cd0d948b8ae7fe505d9f4ebc7/segment_anything/automatic_mask_generator.py#L35    
 
-    # image = image[:1000,:1000,1:4]
+        #Rerun the following with a few settings, ex. 0.86 & 0.9 for iou_thresh
+        # and 0.92 and 0.96 for score_thresh
 
-    # image_clone = np.zeros(image.shape)
-    # image_clone[:,:,0] = image[:,:,2]
-    # image_clone[:,:,1] = image[:,:,0]
-    # image_clone[:,:,2] = image[:,:,1]
+        #############
 
-    # image= image_clone
-    
-    # print(image.dtype)
-    # print(image.shape)
+        # mask_generator_ = SamAutomaticMaskGenerator(
+        #     model=sam,
+        #     points_per_side=40,
+        #     pred_iou_thresh=0.86,
+        #     stability_score_thresh=0.92,
+        #     crop_n_layers=1,
+        #     crop_n_points_downscale_factor=2,
+        #     min_mask_region_area=500,  # Requires open-cv to run post-processing
+        #     output_mode='binary_mask'
+        # )
 
-    # plt.figure(figsize=(10,10))
-    # plt.imshow(rescale_truncate(rescale_image(image)))
-    # # plt.imshow(image)
-    # plt.axis('off')
-    # plt.show()
+        # masks = mask_generator_.generate(image)
 
-    # image[image<-9999] = -10000
+        # print(len(masks))
+        # # print(masks['segmentation'].shape)
 
-    # image = image.astype('int8')
+        # plt.figure(figsize=(10,10))
+        # plt.imshow(rescale_truncate(rescale_image(image)), alpha=0.4)
+        # # plt.imshow(image)
+        # show_anns(masks)
+        # plt.axis('off')
+        # plt.savefig(f'output/test_segment_anything_{model_type}_0417.png', dpi=300, bbox_inches='tight')
+        # # plt.show() 
+        # plt.close()
 
+        # torch.cuda.empty_cache()
 
-    # pl_file = \
-    #         '/home/geoint/tri/Planet_khuong/Tile1459221_Oct2021_psorthotile_analytic_sr_udm2/PSOrthoTile/5049414_1459221_2021-10-30_2445_BGRN_SR.tif'
-    
-    # pl_file = '/home/geoint/tri/Planet_khuong/SAM_inputs/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
+        # """
+        # Mask generation returns a list over masks, where each mask is a dictionary containing various data about the mask. These keys are:
 
-    pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile01/tile01-09_median_composit-2.tiff'
-    
-    name = re.search(r'/tile01/(.*?).tiff', pl_file).group(1)
+        # segmentation : the mask
+        # area : the area of the mask in pixels
+        # bbox : the boundary box of the mask in XYWH format
+        # predicted_iou : the model's own prediction for the quality of the mask
+        # point_coords : the sampled input point that generated this mask
+        # stability_score : an additional measure of mask quality
+        # crop_box : the crop of the image used to generate this mask in XYWH format
 
-    model_type = "vit_l"
-
-    if model_type == "vit_h":
-        sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_h_4b8939.pth"
-    elif model_type == "vit_l":
-        sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_l_0b3195.pth"
-    elif model_type == "vit_b":
-        sam_checkpoint = "/home/geoint/tri/Planet_khuong/sam_model/sam_vit_b_01ec64.pth"
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    sam_kwargs = {
-        "points_per_side": 32,
-        "pred_iou_thresh": 0.86,
-        "stability_score_thresh": 0.92,
-        "crop_n_layers": 1,
-        "crop_n_points_downscale_factor": 2,
-        "min_mask_region_area": 100,
-    }
-
-    sam = SamGeo(
-        checkpoint=sam_checkpoint,
-        model_type=model_type,
-        device=device,
-        erosion_kernel=(3, 3),
-        mask_multiplier=255,
-        sam_kwargs=sam_kwargs,
-    )
-
-    if file_type == 'senegal':
-        mask = f'output/sam/senegal/Tappan01_WV02_20110430_M1BS_103001000A27E100_data-segment-{model_type}.tif'
-        sam.generate(pl_file, mask, batch=True, foreground=True, erosion_kernel=(3, 3), mask_multiplier=255)
-
-        shapefile = f'output/sam/senegal/Tappan01_WV02_20110430_M1BS_103001000A27E100_data-segment-{model_type}.shp'
-        sam.tiff_to_vector(mask, shapefile)
-    else:
-        mask = f'output/sam/{name}-{model_type}-composit-0804.tif'
-        sam.generate(pl_file, mask)
-
-        shapefile = f'output/sam/{name}-{model_type}-composit-0804.shp'
-        sam.tiff_to_vector(mask, shapefile)
-
-
-    #There are several tunable parameters in automatic mask generation that control 
-    # how densely points are sampled and what the thresholds are for removing low 
-    # quality or duplicate masks. Additionally, generation can be automatically 
-    # run on crops of the image to get improved performance on smaller objects, 
-    # and post-processing can remove stray pixels and holes. 
-    # Here is an example configuration that samples more masks:
-    #https://github.com/facebookresearch/segment-anything/blob/9e1eb9fdbc4bca4cd0d948b8ae7fe505d9f4ebc7/segment_anything/automatic_mask_generator.py#L35    
-
-    #Rerun the following with a few settings, ex. 0.86 & 0.9 for iou_thresh
-    # and 0.92 and 0.96 for score_thresh
-
-    #############
-
-    # mask_generator_ = SamAutomaticMaskGenerator(
-    #     model=sam,
-    #     points_per_side=40,
-    #     pred_iou_thresh=0.86,
-    #     stability_score_thresh=0.92,
-    #     crop_n_layers=1,
-    #     crop_n_points_downscale_factor=2,
-    #     min_mask_region_area=500,  # Requires open-cv to run post-processing
-    #     output_mode='binary_mask'
-    # )
-
-    # masks = mask_generator_.generate(image)
-
-    # print(len(masks))
-    # # print(masks['segmentation'].shape)
-
-    # plt.figure(figsize=(10,10))
-    # plt.imshow(rescale_truncate(rescale_image(image)), alpha=0.4)
-    # # plt.imshow(image)
-    # show_anns(masks)
-    # plt.axis('off')
-    # plt.savefig(f'output/test_segment_anything_{model_type}_0417.png', dpi=300, bbox_inches='tight')
-    # # plt.show() 
-    # plt.close()
-
-    # torch.cuda.empty_cache()
-
-    # """
-    # Mask generation returns a list over masks, where each mask is a dictionary containing various data about the mask. These keys are:
-
-    # segmentation : the mask
-    # area : the area of the mask in pixels
-    # bbox : the boundary box of the mask in XYWH format
-    # predicted_iou : the model's own prediction for the quality of the mask
-    # point_coords : the sampled input point that generated this mask
-    # stability_score : an additional measure of mask quality
-    # crop_box : the crop of the image used to generate this mask in XYWH format
-
-    # """
+        # """
 
 
 

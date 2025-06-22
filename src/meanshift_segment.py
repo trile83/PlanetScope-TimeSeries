@@ -5,6 +5,7 @@ import rioxarray as rxr
 import matplotlib.pyplot as plt
 import logging
 from skimage import exposure
+from skimage.segmentation import quickshift, slic
 import time
 import scipy.ndimage as nd
 import rioxarray as rxr
@@ -12,6 +13,8 @@ import xarray as xr
 import rasterio as rio
 import geopandas as gpd
 import json
+import re
+import os
 
 def rescale_image(image: np.ndarray, rescale_type: str = 'per-image'):
     """
@@ -123,15 +126,112 @@ def get_label(pts_arr, data):
     return output
 
 
+def save_raster(ref_im, prediction, name, n_clusters, model_option, mask=True):
+
+    # saved_date = date.today()
+    if mask:
+        ref_im = ref_im.transpose("y", "x", "band")
+
+        ref_im = ref_im.drop(
+                dim="band",
+                labels=ref_im.coords["band"].values[1:],
+                drop=True
+            )
+        
+        
+        prediction = xr.DataArray(
+                    np.expand_dims(prediction, axis=-1),
+                    name=name,
+                    coords=ref_im.coords,
+                    dims=ref_im.dims,
+                    attrs=ref_im.attrs
+                )
+
+        # prediction = prediction.where(xraster != -9999)
+
+        prediction.attrs['long_name'] = (name)
+        prediction = prediction.transpose("band", "y", "x")
+
+        # Set nodata values on mask
+        nodata = prediction.rio.nodata
+        prediction = prediction.where(ref_im != nodata)
+        prediction.rio.write_nodata(
+            255, encoded=True, inplace=True)
+
+        # TODO: ADD CLOUDMASKING STEP HERE
+        # REMOVE CLOUDS USING THE CURRENT MASK
+
+        # Save COG file to disk
+        prediction.rio.to_raster(
+            f'/home/geoint/tri/object-detection/{name}-{n_clusters}-{model_option}.tiff',
+            BIGTIFF="IF_SAFER",
+            compress='LZW',
+            num_threads='all_cpus',
+            driver='GTiff',
+            dtype='uint32'
+        )
+
+    else:
+        ref_im = ref_im.transpose("y", "x", "band")
+
+        ref_im = ref_im.drop(
+                dim="band",
+                labels=ref_im.coords["band"].values[3:],
+                drop=True
+            )
+        
+        
+        prediction = xr.DataArray(
+                    prediction,
+                    name='pca',
+                    coords=ref_im.coords,
+                    dims=ref_im.dims,
+                    attrs=ref_im.attrs
+                )
+
+        # prediction = prediction.where(xraster != -9999)
+
+        prediction.attrs['long_name'] = ('pca')
+        prediction = prediction.transpose("band", "y", "x")
+
+        # Set nodata values on mask
+        # nodata = prediction.rio.nodata
+        # prediction = prediction.where(ref_im != nodata)
+        # prediction.rio.write_nodata(
+        #     255, encoded=True, inplace=True)
+
+        # TODO: ADD CLOUDMASKING STEP HERE
+        # REMOVE CLOUDS USING THE CURRENT MASK
+
+        # Save COG file to disk
+        prediction.rio.to_raster(
+            f'/home/geoint/tri/Planet_khuong/output/wv/{name}_pca_{n_clusters}-1121.tiff',
+            BIGTIFF="IF_SAFER",
+            compress='LZW',
+            # num_threads='all_cpus',
+            driver='GTiff',
+            dtype='uint64'
+        )
+
+
 def run():
     #Loading original image
     # originImg = cv2.imread('Swimming_Pool.jpg')
 
-    pl_file = \
-            '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4906044_1459221_2021-09-16_2447/analytic_sr_udm2/4906044_1459221_2021-09-16_2447_BGRN_SR.tif'
+    pl_file = '/home/geoint/tri/WVsharpenPlanet/subset/Tappan26_WV03_20190426-NE.tif'
+
+    # pl_file = '/home/geoint/tri/nasa_senegal/ETZ-new/Tappan30_WV02_20120122_M1BS_1030010010980300_data.tif'
+
+    # pl_file = '/home/geoint/tri/planet-data/tile14-ts26/L15-0930E-1097N-122019.tif'
+
     field_fl = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
 
-    name = pl_file[-43:-4]
+    # name='Tappan26_WV03_20190426-NE'
+
+    fl_basename = os.path.basename(pl_file)
+    name = fl_basename[:-4]
+    # print(fl_basename)
+    # name = re.search(f'{fl_basename}(.*?).tif', pl_file).group(1)
     planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)
     ref_im = rxr.open_rasterio(pl_file)
 
@@ -148,98 +248,85 @@ def run():
     originShape = originImg.shape
     print(originShape)
 
-    # Converting image into array of dimension [nb of pixels in originImage, 3]
-    # based on r g b intensities
-    flatImg=originImg.reshape(-1,originImg.shape[-1])
+    ###### SLIC needs pixel value to be between 0 and 1, float data type
 
-    # Estimate bandwidth for meanshift algorithm
-    n_jobs = 4
-    bandwidth = estimate_bandwidth(output_points, quantile=0.1, n_samples=100, random_state=42) # 0.3 can be used for cloud masking
-    # bandwidth=5
-    print(bandwidth)
-    ms = MeanShift(bandwidth = bandwidth, min_bin_freq=10, bin_seeding=True, max_iter=5,n_jobs=n_jobs)
+    print('SLIC segment: ')
+    segment_slic = slic(planet_data[:,:,:]/4000,n_segments=1000,compactness=0.15,sigma=0.0,start_label=1)
 
-    # Performing meanshift on flatImg
-    tic = time.time()  
-    ms.fit(flatImg)
+    print(segment_slic.shape)
 
-    out = ms.fit_predict(flatImg)
-    print('out shape', out.shape)
-    out = out.reshape(originShape[:2])
-    print('out shape after reshape', out.shape)
+    save_raster(ref_im, segment_slic, name, '1000', 'slic')
 
-    # (r,g,b) vectors corresponding to the different clusters after meanshift    
-    labels=ms.labels_
+    ###### Quickshift needs pixel value to be in double data type
 
-    # Remaining colors after meanshift    
-    cluster_centers = ms.cluster_centers_
-    # X_cluster = ms.cluster_centers_  
+    # print('Quickshift segment: ')
+    # segment_quickshift = quickshift(planet_data[:,:,:].astype(np.double),kernel_size=7,max_dist=500,ratio=0.5,convert2lab=False)
 
-    # Finding and diplaying the number of clusters    
-    labels_unique = np.unique(labels)
-    n_clusters_ = len(labels_unique)
-    print("number of estimated clusters : %d" % n_clusters_)
+    # print(segment_quickshift.shape)
 
-    # Displaying segmented image    
-    segmentedImg = cluster_centers[np.reshape(labels, originShape[:2])]
-    # X_cluster = X_cluster.reshape(originShape[:2])
-    print('segmentedImg shape: ',segmentedImg.shape)
-    print(f'time to run meanshift: {time.time()-tic} seconds')
+    # save_raster(ref_im, segment_quickshift, name, '8', 'quickshift')
 
-    plt.figure(figsize=(20,20))
-    plt.subplot(1,2,1)
-    plt.title("Image")
-    plt.imshow(rescale_truncate(rescale_image(originImg[:,:,:3])))
-
-    plt.subplot(1,2,2)
-    plt.title("Meanshift")
-    plt.imshow(out.astype(np.uint8), cmap="hsv")
-    plt.savefig(f'output/meanshift-{size}-{n_clusters_}-clusters.png', dpi=300, bbox_inches='tight')
-    plt.show()
-    plt.close()
-
-    # save raster
-    ref_im = ref_im.transpose("y", "x", "band")
-
-    ref_im = ref_im.drop(
-            dim="band",
-            labels=ref_im.coords["band"].values[1:],
-            drop=True
-        )
     
-    prediction = out
-    
-    prediction = xr.DataArray(
-                np.expand_dims(prediction, axis=-1),
-                name='meanshift',
-                coords=ref_im.coords,
-                dims=ref_im.dims,
-                attrs=ref_im.attrs
-            )
 
-    # prediction = prediction.where(xraster != -9999)
+    ##################################################
+    # # ### Mean Shift
+    # flatImg = originImg.reshape((originImg.shape[0] * originImg.shape[1], originImg.shape[2]))
 
-    prediction.attrs['long_name'] = ('meanshift')
-    prediction = prediction.transpose("band", "y", "x")
+    # # # Converting image into array of dimension [nb of pixels in originImage, 3]
+    # # based on r g b intensities
+    # # flatImg=originImg.reshape(-1,originImg.shape[-1])
 
-    # Set nodata values on mask
-    nodata = prediction.rio.nodata
-    prediction = prediction.where(ref_im != nodata)
-    prediction.rio.write_nodata(
-        255, encoded=True, inplace=True)
+    # # Estimate bandwidth for meanshift algorithm
+    # n_jobs = 4
+    # # bandwidth = estimate_bandwidth(output_points, quantile=0.1, n_samples=100, random_state=42) # 0.3 can be used for cloud masking
+    # # bandwidth=5
+    # # print(bandwidth)
+    # # ms = MeanShift(bandwidth = bandwidth, min_bin_freq=10, bin_seeding=True, max_iter=5,n_jobs=n_jobs)
+    # ms = MeanShift(bandwidth = 400, min_bin_freq=10, bin_seeding=True, max_iter=5,n_jobs=n_jobs)
 
-    # TODO: ADD CLOUDMASKING STEP HERE
-    # REMOVE CLOUDS USING THE CURRENT MASK
 
-    # Save COG file to disk
-    prediction.rio.to_raster(
-        f'output/{name}-meanshift-{n_clusters_}.tiff',
-        BIGTIFF="IF_SAFER",
-        compress='LZW',
-        # num_threads='all_cpus',
-        driver='GTiff',
-        dtype='uint8'
-    )
+    # # Performing meanshift on flatImg
+    # print('Mean Shift: ')
+    # tic = time.time()  
+    # ms.fit(flatImg)
+
+    # out = ms.predict(flatImg)
+    # print('out shape', out.shape)
+    # out = out.reshape(originShape[:2])
+    # print('out shape after reshape', out.shape)
+
+    # # (r,g,b) vectors corresponding to the different clusters after meanshift    
+    # labels=ms.labels_
+
+    # # Remaining colors after meanshift    
+    # cluster_centers = ms.cluster_centers_
+    # # X_cluster = ms.cluster_centers_  
+
+    # # Finding and diplaying the number of clusters    
+    # labels_unique = np.unique(labels)
+    # n_clusters_ = len(labels_unique)
+    # print("number of estimated clusters : %d" % n_clusters_)
+
+    # # Displaying segmented image    
+    # segmentedImg = cluster_centers[np.reshape(labels, originShape[:2])]
+    # # X_cluster = X_cluster.reshape(originShape[:2])
+    # print('segmentedImg shape: ',segmentedImg.shape)
+    # print(f'time to run meanshift: {time.time()-tic} seconds')
+
+    # save_raster(ref_im, out, name, n_clusters_, 'meanshift')
+
+    # plt.figure(figsize=(20,20))
+    # plt.subplot(1,2,1)
+    # plt.title("Image")
+    # plt.imshow(rescale_truncate(rescale_image(originImg[:,:,:3])))
+
+    # plt.subplot(1,2,2)
+    # plt.title("Meanshift")
+    # plt.imshow(out.astype(np.uint8), cmap="hsv")
+    # plt.savefig(f'output/meanshift-{size}-{n_clusters_}-clusters.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    # plt.close()
+
 
 
 if __name__ == '__main__':

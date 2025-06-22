@@ -380,8 +380,8 @@ def run():
     #Loading original image
 
     pl_file = \
-            '/home/geoint/tri/Planet_khuong/09-21/files/PSOrthoTile/4912910_1459221_2021-09-18_242d/analytic_sr_udm2/4912910_1459221_2021-09-18_242d_BGRN_SR.tif'
-    field_fl = '/home/geoint/tri/Planet_khuong/Field_Survey_Polygons/Field_Survey_Polygons.shp'
+            '/home/geoint/tri/Planet_khuong/output/median_composite/tile02/tile02-07_median_composit-2.tiff'
+    field_fl = '/home/geoint/tri/Planet_khuong/field/tile1_field_data.shp'
 
     name = pl_file[-43:-4]
     planet_data = np.squeeze(rxr.open_rasterio(pl_file, masked=True).values)

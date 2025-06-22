@@ -1,8 +1,9 @@
 import numpy as np    
-import cv2    
+# import cv2    
 from sklearn.cluster import KMeans
 import rioxarray as rxr
 import matplotlib.pyplot as plt
+import matplotlib.colors as pltc
 import logging
 from skimage import exposure
 import time
@@ -152,11 +153,11 @@ def read_dataset(tile_name='tile01'):
 
     return out_ts
 
-def read_data(fl_path):
+def read_data(fl_path, tile="tile01"):
 
     # fl_path = f'/median_composite/{tile}/'
 
-    name = re.search(r'/median_composite/tile02/(.*?).tiff', fl_path).group(1)
+    name = re.search(f'/median_composite/{tile}/(.*?).tiff', fl_path).group(1)
     planet_data = np.squeeze(rxr.open_rasterio(fl_path, masked=True).values)
     ref_im = rxr.open_rasterio(fl_path)
 
@@ -202,7 +203,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
 
         # Save COG file to disk
         prediction.rio.to_raster(
-            f'output/{name}_5month678910-kmeans-ts-{n_clusters}-0815.tiff',
+            f'/home/geoint/tri/Planet_khuong/output/{name}_5month678910-kmeans-ts-{n_clusters}-0815.tiff',
             BIGTIFF="IF_SAFER",
             compress='LZW',
             # num_threads='all_cpus',
@@ -244,7 +245,7 @@ def save_raster(ref_im, prediction, name, n_clusters, mask=True):
 
         # Save COG file to disk
         prediction.rio.to_raster(
-            f'output/{name}_5month678910-pca-{n_clusters}-0815.tiff',
+            f'/home/geoint/tri/Planet_khuong/output/{name}_5month678910-pca-{n_clusters}-0815.tiff',
             BIGTIFF="IF_SAFER",
             compress='LZW',
             # num_threads='all_cpus',
@@ -286,7 +287,7 @@ def save_raster_stacked(ref_im, prediction, name):
 
     # Save COG file to disk
     prediction.rio.to_raster(
-        f'output/{name}_stacked-5month-0808.tiff',
+        f'/home/geoint/tri/Planet_khuong/output/{name}_stacked-5month-0808.tiff',
         BIGTIFF="IF_SAFER",
         compress='LZW',
         # num_threads='all_cpus',
@@ -304,11 +305,53 @@ def run_pca(data, components: int):
 
     return converted_data
 
+def cal_ndvi(image):
+    
+    np.seterr(divide='ignore', invalid='ignore')
+    ndvi = np.divide((image[:,:,3]-image[:,:,2]), (image[:,:,3]+image[:,:,2]))
+    return ndvi
+
+def cal_ndwi(image):
+    
+    np.seterr(divide='ignore', invalid='ignore')
+    ndwi = np.divide((image[:,:,1]-image[:,:,3]), (image[:,:,1]+image[:,:,3]))
+    return ndwi
+
+def cal_osavi(image):
+    
+    np.seterr(divide='ignore', invalid='ignore')
+    osavi = np.divide(((1+0.16)*(image[:,:,3]-image[:,:,2])), (image[:,:,3]+image[:,:,2]+0.16))
+    return osavi
+
+def add_indices(data):
+
+    out_array = np.zeros((data.shape[0], data.shape[1], 7))
+    ndvi = cal_ndvi(data)
+    ndwi = cal_ndwi(data)
+    osavi = cal_osavi(data)
+
+    out_array[:,:,0] = data[:,:,0]
+    out_array[:,:,1] = data[:,:,1]
+    out_array[:,:,2] = data[:,:,2]
+    out_array[:,:,3] = data[:,:,3]
+    out_array[:,:,4] = ndvi
+    out_array[:,:,5] = ndwi
+    out_array[:,:,6] = osavi
+
+    print(out_array.shape)
+
+    del data
+
+    # print(out_array[:,:,4])
+    # print(out_array[:,:,5])
+
+    return out_array
+
 
 
 def run():
     #Loading original image
-    tile = "tile02"
+    tile = "tile01"
 
     if tile == "tile02":
         pl_file_09 = \
@@ -360,11 +403,17 @@ def run():
     ### stacked only 3 images
     ref_im = rxr.open_rasterio(pl_file_07)
 
-    data_06, name_06 = read_data(pl_file_06)
-    data_07, name_07 = read_data(pl_file_07)
-    data_08, name_08 = read_data(pl_file_08)
-    data_09, name_09 = read_data(pl_file_09)
-    data_10, name_10 = read_data(pl_file_10)
+    data_06, name_06 = read_data(pl_file_06, tile)
+    data_07, name_07 = read_data(pl_file_07, tile)
+    data_08, name_08 = read_data(pl_file_08, tile)
+    data_09, name_09 = read_data(pl_file_09, tile)
+    data_10, name_10 = read_data(pl_file_10, tile)
+
+    data_06 = add_indices(data_06)
+    data_07 = add_indices(data_07)
+    data_08 = add_indices(data_08)
+    data_09 = add_indices(data_09)
+    data_10 = add_indices(data_10)
 
     # data_07 = np.nan_to_num(data_07, nan=-10000)
     # data_08 = np.nan_to_num(data_08, nan=-10000)
@@ -401,8 +450,8 @@ def run():
     # flat08 = np.nan_to_num(flat07, nan=-10000)
     # flat09 = np.nan_to_num(flat07, nan=-10000)
 
-    start_idx = 1000
-    size = 7000
+    start_idx = 0000
+    size = 6000
     originImg = full_img[start_idx:size,start_idx:size,:,:]
 
     # Shape of original image    
@@ -414,15 +463,19 @@ def run():
     flatImg = originImg.reshape((originImg.shape[0] * originImg.shape[1], originImg.shape[2] * originImg.shape[3]))
     
     ## flatten different way
-    flatImg = originImg.reshape((originImg.shape[0] * originImg.shape[1] * originImg.shape[2], originImg.shape[3]))
+    # flatImg = originImg.reshape((originImg.shape[0] * originImg.shape[1] * originImg.shape[2], originImg.shape[3]))
 
     full_flat = full_img.reshape((full_img.shape[0] * full_img.shape[1], full_img.shape[2] * full_img.shape[3]))
 
-    full_flat = full_flat.reshape((full_img.shape[0] * full_img.shape[1] * full_img.shape[2], full_img.shape[3]))
+    # full_flat = full_flat.reshape((full_img.shape[0] * full_img.shape[1] * full_img.shape[2], full_img.shape[3]))
+
+
     # full_flat = np.nan_to_num(full_flat, nan=-10000)
 
     # print('flat img: ', flatImg.shape)
     # print('full flat: ', full_flat.shape)
+    
+    data = data_07
 
     del originImg
     del full_img
@@ -453,7 +506,7 @@ def run():
         flatImg = flatImg
 
     # save kmeans model
-    model_dir = 'output/kmeans_model/'
+    model_dir = '/home/geoint/tri/Planet_khuong/output/kmeans_model/'
     n_clusters = 6
 
     # Open a file and use dump()
@@ -467,6 +520,8 @@ def run():
         tic = time.time()  
         # Run Kmeans clustering
         print("Run KMeans from data.")
+
+        print("number of clusters: ", n_clusters)
         
         k_means = KMeans(n_clusters=n_clusters)
 
@@ -494,27 +549,35 @@ def run():
 
     print("prediction shape: ", prediction.shape)
     X_cluster = prediction
-    X_cluster = X_cluster.reshape((8000,8000,5))
+    # X_cluster = X_cluster.reshape((8000,8000,n_clusters))
+
+    X_cluster = X_cluster.reshape((8000,8000))
 
     print('X_cluster shape: ', X_cluster.shape)
 
-    X_cluster = np.argmax(X_cluster, axis=2)
+    # X_cluster = np.argmax(X_cluster, axis=2)
+    
+    data = data[:,:,1:4]
+    
+    colors = ['brown','gray','lightgreen','gold','green']
+    
+    colormap_pred = pltc.ListedColormap(colors)
     
 
     # save raster
     save_raster(ref_im, X_cluster, name_07, n_clusters)
 
-    # plt.figure(figsize=(20,20))
-    # plt.subplot(1,2,1)
-    # plt.title("Image")
-    # plt.imshow(rescale_truncate(rescale_image(data_07[:,:,1:4])))
+    plt.figure(figsize=(20,20))
+    plt.subplot(1,2,1)
+    plt.title("Image")
+    plt.imshow(rescale_truncate(rescale_image(data[:,:,::-1])))
 
-    # plt.subplot(1,2,2)
-    # plt.title("KMeans")
-    # plt.imshow(X_cluster.astype(np.uint8), cmap="hsv")
-    # plt.savefig(f'output/{name_07}_3month-kmeans-{size}-{n_clusters}-clusters-pca-southdakota-ts01.png', dpi=300, bbox_inches='tight')
-    # plt.show()
-    # plt.close()
+    plt.subplot(1,2,2)
+    plt.title("KMeans")
+    plt.imshow(X_cluster.astype(np.uint8), cmap=colormap_pred)
+    plt.savefig(f'/home/geoint/tri/Planet_khuong/output/{name_07}_3month-kmeans-{size}-{n_clusters}-clusters-pca-southdakota-ts01.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    plt.close()
 
 if __name__ == '__main__':
 
