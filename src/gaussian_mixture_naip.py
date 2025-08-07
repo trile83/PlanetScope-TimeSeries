@@ -96,7 +96,7 @@ def read_data(fl_path, tile='tile01'):
 
     # name = re.search(r'newCAS/(.*?).tif', fl_path).group(1)
     # name = re.search(r'ETZ/(.*?).tif', fl_path).group(1)
-    name = re.search(f'{tile}/(.*?).tif', fl_path).group(1)
+    name = re.search(f'part_1_0/(.*?).tif', fl_path).group(1)
 
     planet_data = np.squeeze(rxr.open_rasterio(fl_path, masked=True).values)
     ref_im = rxr.open_rasterio(fl_path)
@@ -145,7 +145,7 @@ def save_raster(ref_im, prediction, name, n_clusters, model_option, mask=True):
 
         # Save COG file to disk
         prediction.rio.to_raster(
-            f'/home/geoint/tri/Planet_khuong/output/wv/{name}-{model_option}-indices-{n_clusters}-{saved_date}.tiff',
+            f'/home/geoint/tri/Planet_khuong/output/naip/{name}-{model_option}-indices-{n_clusters}-{saved_date}.tiff',
             BIGTIFF="IF_SAFER",
             compress='LZW',
             num_threads='all_cpus',
@@ -187,7 +187,7 @@ def save_raster(ref_im, prediction, name, n_clusters, model_option, mask=True):
 
         # Save COG file to disk
         prediction.rio.to_raster(
-            f'/home/geoint/tri/Planet_khuong/output/wv/{name}_pca_{n_clusters}-1121.tiff',
+            f'/home/geoint/tri/Planet_khuong/output/naip/{name}_pca_{n_clusters}-1121.tiff',
             BIGTIFF="IF_SAFER",
             compress='LZW',
             # num_threads='all_cpus',
@@ -245,7 +245,7 @@ def cal_osavi(image):
 def add_indices(data):
 
     # out_array = np.zeros((data.shape[0], data.shape[1], 11))
-    out_array = np.zeros((data.shape[0], data.shape[1], 8))
+    out_array = np.zeros((data.shape[0], data.shape[1], 7))
     ndvi = cal_ndvi(data)
     ndwi = cal_ndwi(data)
     osavi = cal_osavi(data)
@@ -267,14 +267,11 @@ def add_indices(data):
     out_array[:,:,2] = data[:,:,2]
     out_array[:,:,3] = data[:,:,3]
 
-    out_array[:,:,4] = data[:,:,4] * 10000 ## ndvi diff
-    # out_array[:,:,4] = ndvi
-    # out_array[:,:,5] = ndwi
-    # out_array[:,:,6] = osavi
 
-    out_array[:,:,5] = ndvi
-    out_array[:,:,6] = ndwi
-    out_array[:,:,7] = osavi
+    ### NAIP
+    out_array[:,:,4] = ndvi
+    out_array[:,:,5] = ndwi
+    out_array[:,:,6] = osavi
 
 
     #print(out_array.shape)
@@ -306,12 +303,12 @@ def get_composite(ts_arr):
 def run():
     #Loading original image
     # ts_name = 'Tappan23_WV02_20171024_M1BS_103001007374BB00_data.tif'
-    tile = "wv-ts14"
+    tile = "md"
     # in_data_dir = '/home/geoint/tri/nasa_senegal/newCAS/'
     # in_data_dir = '/home/geoint/tri/super-resolution/output'
-    in_data_dir = '/home/geoint/tri/planet-data/'
+    in_data_dir = '/home/geoint/tri/planet-data/naip/md/cut/part_1_0/'
 
-    files = sorted(glob.glob(f'{in_data_dir}/{tile}/*.tif'))
+    files = sorted(glob.glob(f'{in_data_dir}/*.tif'))
 
     # file = f'{in_data_dir}{ts_name}'
 
@@ -359,7 +356,7 @@ def run():
         pca_arr = run_pca(full_flat, components=3)
         pca_flat = pca_arr
 
-        X_pca = pca_arr.reshape((5000,5000,3))
+        X_pca = pca_arr.reshape((full_img.shape[0],full_img.shape[1],3))
 
         save_raster(ref_im, X_pca[:,:,0], ts_name, 1, mask=True)
         del pca_arr
@@ -374,13 +371,13 @@ def run():
     model_option = "gaussian-mixture" ## "gaussian-mixture" or "kmeans"
     
     if model_option == "gaussian-mixture":
-    	model_dir = f'/home/geoint/tri/Planet_khuong/output/wv/gm_model/'
+    	model_dir = f'/home/geoint/tri/Planet_khuong/output/naip/gm_model/'
     elif model_option == "kmeans":
-    	model_dir = f'/home/geoint/tri/Planet_khuong/output/wv/kmeans_model/'
+    	model_dir = f'/home/geoint/tri/Planet_khuong/output/naip/kmeans_model/'
     n_clusters = 10
 
     # Open a file and use dump()
-    filename = f'{model_dir}{model_option}-wv-indices-{n_clusters}-{tile}.pkl'
+    filename = f'{model_dir}{model_option}-indices-{n_clusters}-{tile}.pkl'
 
     if os.path.isfile(filename):
         tic = time.time()

@@ -153,7 +153,7 @@ if __name__ == '__main__':
         # print(image.shape)
         # print(image.dtype)
 
-        file_type = 'senegal'
+        file_type = 'naip'
 
         # try tiff file
         # pl_file_1 = '/home/geoint/tri/Planet_khuong/Tile1459221_Oct2021_psorthotile_analytic_sr_udm2/PSOrthoTile/5049414_1459221_2021-10-30_2445_BGRN_SR.tif'
@@ -177,10 +177,16 @@ if __name__ == '__main__':
                 pl_file = '/home/geoint/tri/super-resolution/raster/T28PEV_20180510T112121_cutWV_ts16-sr.tif'
         elif file_type == 'dakota':
                 pl_file = '/home/geoint/tri/Planet_khuong/output/median_composite/tile01/tile01-09_median_composit-2.tiff'
+
+        elif file_type == 'naip':
+                pl_file = '/home/geoint/tri/planet-data/naip/md/m_3807545_ne_18_030_20230602.tif'
+
+        elif file_type == 's2':
+                pl_file = '/home/geoint/tri/super-resolution/data/eetz/T28PEA_20171027T112139_cutWV_ts23.tif'
         
         # name = re.search(r'allCAS/(.*?).tif', pl_file).group(1)
 
-        name = re.search(r'raster/(.*?).tif', pl_file).group(1)
+        name = re.search(f'md/(.*?).tif', pl_file).group(1)
 
         model_type = "vit_l"
 
@@ -228,11 +234,18 @@ if __name__ == '__main__':
 
                 shapefile = f'/home/geoint/tri/Planet_khuong/output/sam/senegal/{name}-{model_type}.shp'
                 sam.tiff_to_vector(mask, shapefile)
-        else:
-                mask = f'output/sam/{name}-{model_type}-composit-0804.tif'
+        elif file_type == 'naip':
+                mask = f'/home/geoint/tri/Planet_khuong/output/sam/naip/{name}-{model_type}.tif'
                 sam.generate(pl_file, mask)
 
-                shapefile = f'output/sam/{name}-{model_type}-composit-0804.shp'
+                shapefile = f'/home/geoint/tri/Planet_khuong/output/sam/naip/{name}-{model_type}.shp'
+                sam.tiff_to_vector(mask, shapefile)
+
+        elif file_type == 's2':
+                mask = f'/home/geoint/tri/Planet_khuong/output/sam/s2/{name}-{model_type}.tif'
+                sam.generate(pl_file, mask)
+
+                shapefile = f'/home/geoint/tri/Planet_khuong/output/sam/s2/{name}-{model_type}.shp'
                 sam.tiff_to_vector(mask, shapefile)
 
 
